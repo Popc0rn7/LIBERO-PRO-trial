@@ -1,12 +1,9 @@
-"""Transport-neutral protocol shared by evaluation and policy processes."""
+"""Internal, transport-neutral data passed between evaluator and clients."""
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, Mapping, Optional
 
 import numpy as np
-
-
-PROTOCOL_VERSION = "libero-policy-v1"
 
 
 @dataclass(frozen=True)
@@ -52,7 +49,6 @@ class PolicyRequest:
     instruction: str
     observation: RawObservation
     action_spec: ActionSpec = field(default_factory=ActionSpec)
-    protocol_version: str = PROTOCOL_VERSION
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -63,7 +59,7 @@ class PolicyResponse:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def validate(self, expected: ActionSpec) -> "PolicyResponse":
-        actions = np.asarray(self.actions, dtype=np.float32)
+        actions = np.asarray(self.actions)
         if actions.ndim != 2 or actions.shape[0] == 0:
             raise ValueError("policy actions must have non-empty shape [time, action_dim]")
         if actions.shape[1] != expected.dim:
@@ -80,5 +76,9 @@ class PolicyResponse:
             )
         if not np.isfinite(actions).all():
             raise ValueError("policy returned NaN or infinite actions")
+        if actions.dtype != np.float32:
+            raise ValueError("policy actions must have dtype float32")
+        if np.any(actions < -1.0) or np.any(actions > 1.0):
+            raise ValueError("policy actions must be within [-1, 1]")
         self.actions = actions
         return self

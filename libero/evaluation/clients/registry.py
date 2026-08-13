@@ -37,4 +37,9 @@ def create_client(policy_cfg) -> PolicyClient:
     cls = _CLIENTS[name]
     if not hasattr(cls, "from_config"):
         raise TypeError("client {!r} does not provide from_config()".format(name))
-    return cls.from_config(policy_cfg)
+    try:
+        return cls.from_config(policy_cfg)
+    except Exception:
+        # A partially constructed transport must be cleaned up by from_config;
+        # there is no safe instance to close here.
+        raise

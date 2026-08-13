@@ -1,232 +1,95 @@
 # LIBERO Policy Evaluation
 
-## CLI usage
+## Quick Start
+
+安装额外需要的依赖：
 
 ```bash
 conda activate libero_pro
-python -m libero.evaluation.eval \
-  policy=pi0 \
-  benchmark.suite=libero_goal \
-  benchmark.task_ids='[0,1]' \
-  benchmark.episodes_per_task=10
+pip install -r libero/evaluation/requirements.txt
 ```
 
-Common overrides:
+运行测评：
 
 ```bash
-# Policy server address
-policy.connection.host=127.0.0.1
-policy.connection.port=8000
-
-# Evaluation settings
-benchmark.seed=0
-rollout.execute_horizon=8
-rollout.warmup_steps=10
-rollout.max_steps=600
-rollout.episode_timeout_seconds=300
-
-# Output
-output.directory=outputs/my_eval
-recording.save_video=true
+python -m libero.evaluation.eval policy=mock benchmark.task_ids='[0]' benchmark.episodes_per_task=1
 ```
 
-Use the mock policy to check the CLI and evaluation pipeline without starting a
-model server:
+## Mock Policy Server
+
+可以使用 mock 的 policy 来离线测试评测联通性，默认 `noop` mock 保持机械臂不动，夹爪重复开合。
 
 ```bash
-python -m libero.evaluation.eval \
-  policy=mock \
-  benchmark.task_ids='[0]'
+python -m libero.evaluation.mock_server --mode noop --chunk-size 16
 ```
 
-Results are written to `<output.directory>/episodes.jsonl` and
-`<output.directory>/summary.json`.
-
-The complete list of evaluation options and their defaults is in
-[`configs/eval.yaml`](configs/eval.yaml). Policy-specific options are in
-[`configs/policy/`](configs/policy/).
-
-## Add a policy
-
-First decide whether the policy can use an existing client.
-
-### Option A: reuse an existing client
-
-If the model is served by OpenPI, only add one YAML file. Copy
-[`configs/policy/pi0.yaml`](configs/policy/pi0.yaml) to
-`configs/policy/<policy_name>.yaml` and update its values:
-
-```yaml
-name: my_policy
-client: openpi
-
-connection:
-  host: 127.0.0.1
-  port: 8000
-  timeout_seconds: 30
-
-protocol:
-  version: libero-policy-v1
-
-action:
-  type: delta_ee
-  dim: 7
-  controller: OSC_POSE
-  control_frequency_hz: 20
-
-capabilities:
-  action_chunk: true
-  stateful: false
-```
-
-Run it using the YAML filename:
+## 常用配置
 
 ```bash
-python -m libero.evaluation.eval policy=my_policy
+python -m libero.evaluation.eval policy=pi0 \
+  policy.connection.host=127.0.0.1 policy.connection.port=8000 \
+  policy.inference.action_chunk_size=16 rollout.execute_horizon=8 \
+  benchmark.suite=libero_goal benchmark.task_ids='[0,1]' \
+  benchmark.init_state_ids='[0,2]' \
+  recording.enabled=true live_preview.enabled=true \
+  output.directory=outputs/my_eval
 ```
 
-Reference files:
+默认使用 MuJoCo EGL 离屏渲染。只有系统安装了 OSMesa 时才覆盖 `environment.render_backend=osmesa`。
 
-- OpenPI policy config: [`configs/policy/pi0.yaml`](configs/policy/pi0.yaml)
-- OpenPI client implementation: [`clients/openpi_client.py`](clients/openpi_client.py)
+`benchmark.init_state_ids=[]` 时，每个 task 根据 `episodes_per_task` 顺序选择初态；显式提供列表时，该列表直接决定 episode schedule 和数量。
 
 
-### Option B: add a new client
+## 架构
 
-If the policy uses another server protocol, make these three changes:
+Evaluator 负责 Hydra 配置、LIBERO task/init state、环境生命周期、同步 rollout、action 执行上限、录像、预览和结果统计。`PolicyClient` 负责连接策略服务、健康检查、超时、wire protocol、序列化、模型预处理和 action decoding。两者只通过 `PolicyRequest`、`PolicyResponse`、`RawObservation` 和 `ActionSpec` 交换内部 Python 数据。
 
-1. Add `clients/<client_name>_client.py`.
-2. Import the new class in [`clients/__init__.py`](clients/__init__.py).
-3. Add `configs/policy/<policy_name>.yaml` with `client: <client_name>`.
+```text
+Hydra CLI → EvaluationRunner → ActionChunkExecutor → PolicyClient → Policy Server
+                    ↓                                      ↑
+             LIBERO environment              WebSocket / Client-owned protocol
+```
 
-Use [`clients/openpi_client.py`](clients/openpi_client.py) as a network-client
-example. A client must register itself and implement four methods:
+Evaluator 不规定 HTTP/WebSocket 字段，不翻转或缩放输入图像，不修改四元数或拼接 state vector，也不裁剪 action。Client 返回的 action 必须已经能够直接传给 `env.step()`。
+
+## 新增 Policy
+
+### A. 复用已有的传输协议
+
+比如使用 OpenPI 系列的 policy，只需复制 `configs/policy/pi0.yaml` 为 `configs/policy/<name>.yaml`，修改连接和推理配置，随后以 `policy=<name>` 运行。
+
+### B. 使用新的传输协议
+
+新增传输协议应新增client负责数据翻译 `clients/<name>_client.py`，用 `@register_client("<name>")` 注册并实现：
 
 ```python
-from libero.evaluation import PolicyClient, PolicyResponse, register_client
-
-
-@register_client("my_client")
 class MyClient(PolicyClient):
     @classmethod
-    def from_config(cls, cfg):
-        # Read cfg.connection and create the transport.
-        return cls(...)
-
-    def reset(self, episode_id, instruction):
-        # Clear state from the previous episode.
-        ...
-
-    def infer(self, request):
-        # Send request.observation and request.instruction to the policy.
-        return PolicyResponse(actions=...)
-
-    def close(self):
-        # Close sockets or other resources.
-        ...
+    def from_config(cls, cfg): ...
+    def check(self) -> ClientInfo: ...
+    def reset(self, episode_id, instruction): ...
+    def infer(self, request) -> PolicyResponse: ...
+    def close(self): ...
 ```
 
-Before implementing `infer()`, follow the protocol below. The Python source of
-truth is [`protocol.py`](protocol.py).
+Libero-pro协议定义在 `protocol.py` ，规范 evaluator 内部数据结构。Client 完全控制 wire protocol、传输、序列化、图像与 state 预处理、归一化和 action decoding。`policy.inference.action_chunk_size` 只提供给 Client；Evaluator 仅通过 `rollout.execute_horizon` 决定一个 chunk 最多执行多少个动作。
 
-## Policy protocol: `libero-policy-v1`
+Action 必须是非空、有限、位于 `[-1, 1]` 的 `float32[T, 7]`，类型为 `delta_ee`。非法响应只终止当前 episode；单次请求 timeout 来自 `policy.connection.timeout_seconds`，episode 总 timeout 来自 `rollout.episode_timeout_seconds`。
 
-This section is the contract between the evaluator and every policy client.
-Transport adapters may choose their own wire encoding, but they must preserve
-these fields and semantics when constructing `PolicyRequest` and
-`PolicyResponse`.
+## 常见问题
 
-### Episode lifecycle
+### PyTorch 无法加载 executable stack
 
-For every episode, the evaluator performs the following calls in order:
+如果出现 `libtorch_cpu.so: cannot enable executable stack`，可使用仓库脚本清除错误 ELF 标志；脚本会先创建备份：
 
-1. `client.reset(episode_id, instruction)` exactly once.
-2. `client.infer(request)` whenever no cached action remains.
-3. `client.close()` after the complete evaluation finishes.
-
-`episode_id` is unique and has the form `<suite>/<task_id>/<rollout_id>`.
-A stateful policy must discard all state from the previous episode during
-`reset()`. The current OpenPI transport does not provide a reset RPC; therefore
-it should only be used with stateless servers unless the deployment adds its
-own reset handling.
-
-### Inference request
-
-`infer()` receives a [`PolicyRequest`](protocol.py) with these fields:
-
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `protocol_version` | `str` | Always `libero-policy-v1`. |
-| `episode_id` | `str` | Stable unique ID for the current episode. |
-| `step` | `int` | Environment step at which this chunk is requested. |
-| `instruction` | `str` | LIBERO natural-language task instruction. |
-| `observation` | `RawObservation` | Latest unprocessed LIBERO observation. |
-| `action_spec` | `ActionSpec` | Action format required by the evaluator. |
-| `metadata` | `dict` | Reserved extension field; currently empty. |
-
-`RawObservation` contains:
-
-| Field | dtype | Shape / convention |
-| --- | --- | --- |
-| `agentview_rgb` | `uint8` | `[H, W, 3]`, raw `agentview_image`. |
-| `wrist_rgb` | `uint8` | `[H, W, 3]`, raw `robot0_eye_in_hand_image`. |
-| `eef_pos` | `float32` | `[3]`, end-effector position. |
-| `eef_quat` | `float32` | `[4]`, LIBERO/robosuite quaternion as provided by the environment. |
-| `gripper_qpos` | `float32` | `[2]`, raw gripper joint positions. |
-| `joint_pos` | `float32` | `[7]`, raw robot joint positions. |
-
-The evaluator intentionally does not flip or resize images, change quaternion
-representations, concatenate state, or normalize values. Those operations are
-checkpoint-specific and belong in the policy service.
-
-The currently supported `ActionSpec` is:
-
-```text
-type: delta_ee
-dim: 7
-controller: OSC_POSE
-control_frequency_hz: 20
+```bash
+python scripts/clear_elf_execstack.py
 ```
 
-### Inference response
+### OSMesa 无法加载
 
-`infer()` must return a [`PolicyResponse`](protocol.py):
+如果出现 `libOSMesa.so.0: cannot open shared object file`，使用本机已验证的 EGL：
 
-| Field | Type | Requirement |
-| --- | --- | --- |
-| `actions` | array-like | Non-empty `float32[T, 7]` action chunk. |
-| `action_spec` | `ActionSpec` | Must use the requested action type. |
-| `metadata` | `dict` | Optional diagnostics; ignored by rollout logic. |
-
-Every row of `actions` must already be decoded, de-normalized, and directly
-executable by `env.step()`. The evaluator rejects an empty chunk, a one-
-dimensional action, a dimension other than 7, a mismatched action type, and any
-NaN or infinite value. If `rollout.clip_actions=true`, accepted actions are
-clipped elementwise to `[-1, 1]` immediately before execution.
-
-The evaluator executes at most `rollout.execute_horizon` rows from a response.
-If the response is shorter, it requests another chunk after consuming all rows;
-if it is longer, rows beyond the horizon are discarded. A new request always
-contains the latest observation.
-
-### OpenPI wire mapping
-
-[`clients/openpi_client.py`](clients/openpi_client.py) maps the protocol request
-to the following OpenPI dictionary keys:
-
-```text
-observation/agentview_rgb
-observation/wrist_rgb
-observation/eef_pos
-observation/eef_quat
-observation/gripper_qpos
-observation/joint_pos
-prompt
-episode_id
-step
-protocol_version
+```bash
+python -m libero.evaluation.eval policy=mock environment.render_backend=egl
 ```
-
-The OpenPI server response must contain `actions`. It may also contain
-`action_spec` and `metadata`; when `action_spec` is omitted, the client uses the
-specification from the request.

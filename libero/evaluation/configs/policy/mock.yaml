@@ -1,16 +1,13 @@
 name: mock
-client: mock
-connection: {}
-protocol:
-  version: libero-policy-v1
+client: openpi
+connection:
+  host: 127.0.0.1
+  port: 8000
+  timeout_seconds: 30
+inference:
+  action_chunk_size: 16
 action:
   type: delta_ee
   dim: 7
   controller: OSC_POSE
   control_frequency_hz: 20
-capabilities:
-  action_chunk: true
-  stateful: false
-mock:
-  chunk_size: 16
-  value: 0.0
