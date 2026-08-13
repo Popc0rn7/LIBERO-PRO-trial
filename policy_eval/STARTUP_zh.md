@@ -14,7 +14,188 @@ D:\BenchmarkTest\
 LIBERO/MuJoCo 环境端运行在 WSL 中；VLA 模型可以运行在同一个 WSL、Windows
 主机或远程 GPU 服务器上。实时场景通过浏览器查看。
 
-## 1. 每次进入 WSL 后的准备步骤
+## 1. 首次创建 `libero-pro-cpu` 环境
+
+本节是环境配置的核心，只需执行一次。它假设 WSL Ubuntu 和 Miniforge 已经安装，
+且 Miniforge 位于 `~/miniforge3`。已经能正常激活 `libero-pro-cpu` 的机器可以直接
+跳到“每次进入 WSL 后的准备步骤”。
+
+`libero-pro-cpu` 只运行 LIBERO、MuJoCo 和评测器，不加载真实 VLA 模型。因此它
+使用 CPU PyTorch，不安装 CUDA；真实 VLA 模型使用独立的模型服务器环境。
+
+### 1.1 安装 MuJoCo 无头渲染系统库
+
+在 WSL 中执行：
+
+```bash
+sudo apt update
+sudo apt install -y \
+  build-essential \
+  libosmesa6-dev \
+  libgl1-mesa-dev \
+  libglfw3
+```
+
+OSMesa、Mesa 和 GLFW 用于 WSL 中的 MuJoCo 离屏渲染。如果这些库已经安装，重复
+执行不会影响现有环境。
+
+### 1.2 创建并激活 Conda 环境
+
+```bash
+source ~/miniforge3/etc/profile.d/conda.sh
+conda create -n libero-pro-cpu python=3.8 -y
+conda activate libero-pro-cpu
+
+python --version
+which python
+```
+
+当前已验证环境的输出是：
+
+```text
+Python 3.8.13
+/home/<WSL用户名>/miniforge3/envs/libero-pro-cpu/bin/python
+```
+
+如果 `conda create` 提示该环境已经存在，不要覆盖或删除它，直接执行：
+
+```bash
+conda activate libero-pro-cpu
+```
+
+### 1.3 安装 CPU PyTorch
+
+```bash
+python -m pip install \
+  --extra-index-url https://download.pytorch.org/whl/cpu \
+  torch==1.11.0+cpu
+```
+
+安装后确认 PyTorch 不使用 CUDA：
+
+```bash
+python -c "import torch; print(torch.__version__); print('CUDA available:', torch.cuda.is_available())"
+```
+
+预期结果包含：
+
+```text
+1.11.0+cpu
+CUDA available: False
+```
+
+### 1.4 安装 LIBERO 和评测依赖
+
+```bash
+cd /mnt/d/BenchmarkTest/LIBERO-PRO-trial
+
+python -m pip install -r policy_eval/requirements-env-cpu.txt
+python -m pip install --no-deps -e .
+```
+
+`requirements-env-cpu.txt` 会安装当前已验证的环境端依赖，包括：
+
+- NumPy 1.24.4
+- robosuite 1.4.0
+- MuJoCo 3.2.3
+- BDDL 1.0.1
+- Gym、imageio 和录像支持
+
+`pip install --no-deps -e .` 会把当前仓库以可编辑模式安装为 `libero` 包；之后修改
+仓库代码无需重新安装。评测数据也已经包含在仓库内：
+
+```text
+libero/libero/bddl_files
+libero/libero/init_files
+```
+
+正常运行不依赖额外的 `libero_data/`，也不需要传 `--data-root`。
+
+安装后必须检查 `libero` 实际指向当前 `LIBERO-PRO-trial`，避免环境仍引用旧目录：
+
+```bash
+python -m pip show libero | grep -E '^(Version|Editable project location):'
+```
+
+预期包含：
+
+```text
+Version: 0.1.0
+Editable project location: /mnt/d/BenchmarkTest/LIBERO-PRO-trial
+```
+
+如果这里显示 `LIBERO-PRO-master` 或其他旧目录，在当前 Conda 环境中重新挂载：
+
+```bash
+python -m pip uninstall -y libero
+cd /mnt/d/BenchmarkTest/LIBERO-PRO-trial
+python -m pip install --no-deps -e .
+```
+
+### 1.5 检查环境是否安装正确
+
+确认当前 Python 确实来自 `libero-pro-cpu`：
+
+```bash
+conda info --envs
+which python
+python --version
+python -m pip show libero | grep -E '^(Version|Editable project location):'
+```
+
+检查关键依赖版本和导入：
+
+```bash
+MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa \
+python -c "import torch, numpy, mujoco, robosuite, libero; print('imports: OK'); print('torch:', torch.__version__); print('numpy:', numpy.__version__); print('mujoco:', mujoco.__version__); print('robosuite:', robosuite.__version__)"
+```
+
+运行协议和实时预览单元测试：
+
+```bash
+python -m unittest tests.test_policy_eval_protocol -v
+```
+
+### 1.6 运行两步完整冒烟测试
+
+```bash
+bash policy_eval/run_mock_eval.sh \
+  --max-steps 2 \
+  --stabilization-steps 1 \
+  --camera-size 128 \
+  --no-save-video \
+  --live-preview
+```
+
+如果终端打印任务信息、实时预览地址并最终显示 `evaluation completed`，说明
+`libero-pro-cpu`、MuJoCo、LIBERO、mock 策略和实时预览链路均已配置成功。mock
+不会完成抓取任务，因此 `success_rate=0.0` 是预期结果。
+
+### 1.7 一次性复制版本
+
+在 WSL 和 Miniforge 已安装的前提下，以下命令可以从头创建该环境：
+
+```bash
+sudo apt update
+sudo apt install -y build-essential libosmesa6-dev libgl1-mesa-dev libglfw3
+
+source ~/miniforge3/etc/profile.d/conda.sh
+conda create -n libero-pro-cpu python=3.8 -y
+conda activate libero-pro-cpu
+
+python -m pip install \
+  --extra-index-url https://download.pytorch.org/whl/cpu \
+  torch==1.11.0+cpu
+
+cd /mnt/d/BenchmarkTest/LIBERO-PRO-trial
+python -m pip install -r policy_eval/requirements-env-cpu.txt
+python -m pip install --no-deps -e .
+python -m pip show libero | grep -E '^(Version|Editable project location):'
+
+python -m unittest tests.test_policy_eval_protocol -v
+```
+
+## 2. 每次进入 WSL 后的准备步骤
 
 先在 Windows PowerShell 中进入 WSL：
 
@@ -57,7 +238,7 @@ conda activate libero-pro-cpu
 不要直接改用系统 `python3`，因为系统环境通常没有安装 LIBERO、MuJoCo 和
 robosuite 所需的版本。
 
-## 2. 推荐：一条命令启动 mock 联调
+## 3. 推荐：一条命令启动 mock 联调
 
 首次检查环境、动作协议和实时画面时，推荐使用 mock。该脚本会自动启动 mock
 模型服务、运行评测，并在退出时关闭模型服务：
@@ -97,7 +278,7 @@ bash policy_eval/run_mock_eval.sh \
   --live-preview
 ```
 
-## 3. 双终端启动方式
+## 4. 双终端启动方式
 
 真实 VLA 评测由两个独立进程组成：
 
@@ -106,7 +287,7 @@ bash policy_eval/run_mock_eval.sh \
 终端 B：LIBERO/MuJoCo 环境评测器
 ```
 
-### 3.1 终端 A：启动模型服务
+### 4.1 终端 A：启动模型服务
 
 验证流程时可以先启动仓库自带的 mock 服务：
 
@@ -142,7 +323,7 @@ curl http://127.0.0.1:8000/healthz
 
 模型服务必须返回可直接交给 LIBERO `env.step()` 的 `[T, 7]` 动作块。
 
-### 3.2 终端 B：启动 LIBERO 评测
+### 4.2 终端 B：启动 LIBERO 评测
 
 重新打开一个 WSL 终端，并再次激活环境：
 
@@ -178,7 +359,7 @@ outputs/policy_eval/<suite>_<task>_<timestamp>/
 └── episode_000_init_000.mp4
 ```
 
-## 4. 实时预览和录像选项
+## 5. 实时预览和录像选项
 
 实时预览和录像互相独立：
 
@@ -216,7 +397,7 @@ outputs/policy_eval/<suite>_<task>_<timestamp>/
 此预览服务没有身份验证或 TLS，只应在可信内网或 SSH 隧道中使用，不应直接暴露
 到公网。
 
-## 5. 连接真实或远程 VLA 服务器
+## 6. 连接真实或远程 VLA 服务器
 
 如果 VLA 服务运行在远程 GPU 服务器，将 `--policy-url` 改为该服务器的内网地址：
 
@@ -252,7 +433,7 @@ curl "http://${WINDOWS_HOST_IP}:8000/healthz"
 Windows 模型服务还需要监听可被 WSL 访问的网卡，并允许对应防火墙端口。不要将
 未鉴权的模型服务直接暴露到公网。
 
-## 6. 常见问题
+## 7. 常见问题
 
 ### `python: command not found`
 
@@ -316,7 +497,7 @@ ss -ltnp | grep -E ':(8000|8765)\b'
 在运行评测的 WSL 终端按 `Ctrl+C`。一键 mock 脚本会同时清理它启动的 mock
 服务；双终端方式还需要在模型服务终端按一次 `Ctrl+C`。
 
-## 7. 最短启动清单
+## 8. 最短启动清单
 
 只想快速看到实时画面时，依次执行：
 
