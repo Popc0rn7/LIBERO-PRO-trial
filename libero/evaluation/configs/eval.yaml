@@ -1,0 +1,35 @@
+defaults:
+  - policy: mock
+  - _self_
+
+benchmark:
+  suite: libero_goal
+  task_ids: []
+  episodes_per_task: 10
+  seed: 0
+
+perturbation:
+  enabled: false
+
+rollout:
+  execute_horizon: 8
+  warmup_steps: 10
+  max_steps: 600
+  episode_timeout_seconds: 300
+  clip_actions: true
+
+recording:
+  save_video: false
+  video_directory: ${output.directory}/videos
+  camera_height: 256
+  camera_width: 256
+  fps: 20
+
+output:
+  directory: ${hydra:runtime.output_dir}/evaluation
+  episodes_file: episodes.jsonl
+  summary_file: summary.json
+
+hydra:
+  job:
+    chdir: false

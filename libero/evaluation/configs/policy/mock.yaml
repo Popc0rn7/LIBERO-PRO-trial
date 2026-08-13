@@ -1,0 +1,16 @@
+name: mock
+client: mock
+connection: {}
+protocol:
+  version: libero-policy-v1
+action:
+  type: delta_ee
+  dim: 7
+  controller: OSC_POSE
+  control_frequency_hz: 20
+capabilities:
+  action_chunk: true
+  stateful: false
+mock:
+  chunk_size: 16
+  value: 0.0
