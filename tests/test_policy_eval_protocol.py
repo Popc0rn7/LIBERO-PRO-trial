@@ -111,6 +111,19 @@ class EvaluatorUtilityTest(unittest.TestCase):
             self.assertEqual(paths["bddl_files"], package / "bddl_files")
             self.assertEqual(paths["init_states"], external / "init_files")
 
+    def test_repository_data_is_the_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary) / "repo"
+            package = repo / "libero" / "libero"
+            (package / "assets").mkdir(parents=True)
+            (package / "bddl_files" / "libero_object").mkdir(parents=True)
+            (package / "init_files" / "libero_object").mkdir(parents=True)
+
+            paths = resolve_data_paths(repo, None, "libero_object")
+
+            self.assertEqual(paths["bddl_files"], package / "bddl_files")
+            self.assertEqual(paths["init_states"], package / "init_files")
+
 
 class MockServerIntegrationTest(unittest.TestCase):
     @classmethod

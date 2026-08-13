@@ -69,10 +69,8 @@ def resolve_data_paths(
     candidates: List[Path] = []
     if explicit_data_root is not None:
         candidates.append(explicit_data_root.expanduser().resolve())
-    else:
-        # Support a sibling data directory, for example:
-        # D:/BenchmarkTest/{LIBERO-PRO-trial,libero_data}.
-        candidates.append(repo_root.parent / "libero_data")
+    # The repository is self-contained by default. --data-root remains available
+    # only as an explicit override for deployments that keep data elsewhere.
     candidates.append(package_root)
 
     def select_category(category: str) -> Path:
@@ -521,7 +519,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--render-backend", choices=("osmesa", "egl"), default="osmesa")
     parser.add_argument("--repo-root", type=Path, default=repo_default)
-    parser.add_argument("--data-root", type=Path)
+    parser.add_argument(
+        "--data-root",
+        type=Path,
+        help="optional data-root override; defaults to <repo>/libero/libero",
+    )
     parser.add_argument("--config-dir", type=Path)
     parser.add_argument("--output-root", type=Path)
     parser.add_argument("--run-name")

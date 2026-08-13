@@ -4,8 +4,11 @@
 
 ```text
 D:\BenchmarkTest\
-├── LIBERO-PRO-trial\     # 代码仓库
-└── libero_data\          # 仓库外的数据目录
+└── LIBERO-PRO-trial\
+    ├── policy_eval\
+    └── libero\libero\
+        ├── bddl_files\    # BDDL 数据
+        └── init_files\    # 初始状态数据
 ```
 
 LIBERO/MuJoCo 环境端运行在 WSL 中；VLA 模型可以运行在同一个 WSL、Windows
@@ -35,12 +38,14 @@ python --version
 Python 3.8.13
 ```
 
-再确认外部数据目录存在：
+再确认仓库内数据目录存在：
 
 ```bash
-test -d /mnt/d/BenchmarkTest/libero_data/init_files && echo "init data: OK"
-test -d /mnt/d/BenchmarkTest/libero_data/bddl_files && echo "bddl data: OK"
+test -d libero/libero/init_files && echo "init data: OK"
+test -d libero/libero/bddl_files && echo "bddl data: OK"
 ```
+
+评测器默认从这两个仓库内目录加载数据，不需要额外下载或传入 `--data-root`。
 
 如果出现 `Command 'python' not found`，说明当前终端没有激活 Conda 环境。重新执行：
 
@@ -152,7 +157,6 @@ cd /mnt/d/BenchmarkTest/LIBERO-PRO-trial
 ```bash
 python -m policy_eval.eval_one_task \
   --policy-url http://127.0.0.1:8000 \
-  --data-root /mnt/d/BenchmarkTest/libero_data \
   --suite libero_object \
   --task-name pick_up_the_cream_cheese_and_place_it_in_the_basket \
   --n-episodes 1 \
@@ -219,7 +223,6 @@ outputs/policy_eval/<suite>_<task>_<timestamp>/
 ```bash
 python -m policy_eval.eval_one_task \
   --policy-url http://192.168.1.50:8000 \
-  --data-root /mnt/d/BenchmarkTest/libero_data \
   --suite libero_object \
   --task-name pick_up_the_cream_cheese_and_place_it_in_the_basket \
   --live-preview

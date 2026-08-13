@@ -68,11 +68,13 @@ python -m pip install \
   -r policy_eval/requirements-env-cpu.txt
 ```
 
-数据不用复制。评测器会分别检查每一类数据：
+评测数据已经包含在仓库中，不依赖仓库外的 `libero_data/`：
 
-- 标准 `libero_object` 的 BDDL：当前仓库 `libero/libero/bddl_files`
-- 已下载的初始状态：`D:\BenchmarkTest\libero_data\init_files`
-- LIBERO-PRO 扰动 BDDL：`D:\BenchmarkTest\libero_data\bddl_files`
+- BDDL：`libero/libero/bddl_files`
+- 初始状态：`libero/libero/init_files`
+
+正常运行不需要传 `--data-root`。只有在部署时主动把数据放到其他目录，才使用
+`--data-root /path/to/data` 覆盖上述默认路径。
 
 它会在 `.runtime/libero_config/config.yaml` 自动写入正确的 Linux 路径，不触发 LIBERO 首次导入时的交互式提问。
 
