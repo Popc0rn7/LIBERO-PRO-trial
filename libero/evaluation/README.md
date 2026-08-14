@@ -27,6 +27,37 @@ python -m libero.evaluation.eval policy=pi0 \
   output.directory=outputs/my_eval
 ```
 
+### GR00T TCP Server
+
+针对以下 GR00T 服务，使用内置的 ZeroMQ TCP client：
+
+```bash
+uv run python gr00t/eval/run_gr00t_server.py \
+  --model-path $HF_CKPT/GR00T-N1.7-LIBERO/libero_10 \
+  --embodiment-tag LIBERO_PANDA --device cuda:0 \
+  --host 127.0.0.1 --port 8001 --use-sim-policy-wrapper
+```
+
+```bash
+python -m libero.evaluation.eval policy=gr00t \
+  policy.connection.host=127.0.0.1 policy.connection.port=8001 \
+  benchmark.task_ids='[0,1]' benchmark.episodes_per_task=50 \
+  output.directory=outputs/gr00t_eval
+```
+
+配置文件是 `configs/policy/gr00t.yaml`。它将 evaluator 的 LIBERO observation 转为
+GR00T sim wrapper 的 `video.*`、`state.*` 和语言字段，并将 `action.x` 到
+`action.gripper` 合成为 `[T, 7]` 的 `delta_ee` 动作块。夹爪输出会复现 GR00T
+原生 LIBERO wrapper 的变换：模型的 `0=close / 1=open` 转为 LIBERO 的
+`+1=close / -1=open`。
+
+服务以 `--host 127.0.0.1` 启动时只能从同一机器连接。若 evaluator 在另一台机器，
+请在 evaluator 机器创建隧道后仍配置 `127.0.0.1:8001`：
+
+```bash
+ssh -N -L 8001:127.0.0.1:8001 <user>@<gr00t-server-host>
+```
+
 默认使用 MuJoCo EGL 离屏渲染。只有系统安装了 OSMesa 时才覆盖 `environment.render_backend=osmesa`。
 
 `benchmark.init_state_ids=[]` 时，每个 task 根据 `episodes_per_task` 顺序选择不重复初态；默认配置只运行 1 个初态，方便 smoke test。完整评测可设置 `benchmark.episodes_per_task=50`。请求数量超过可用初态时会报错，不会循环复用。显式提供列表时，该列表直接决定 episode schedule 和数量。每个 task 环境固定使用 `benchmark.seed`（默认 7），不会在 episode 之间重新派生 seed。

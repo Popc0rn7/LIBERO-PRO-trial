@@ -5,3 +5,5 @@ openpi-client==0.1.2
 imageio>=2.22,<3
 imageio-ffmpeg>=0.4,<1
 Pillow>=9.2,<11
+msgpack-numpy==0.4.8
+pyzmq==27.0.1
