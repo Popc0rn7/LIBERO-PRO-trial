@@ -56,6 +56,7 @@ class EvaluationRunner:
 
     def run(self):
         suite_name = str(self.cfg.benchmark.suite); suite = self.suite_factory(suite_name)
+        seed = int(self.cfg.benchmark.seed); random.seed(seed); np.random.seed(seed)
         task_ids = list(self.cfg.benchmark.task_ids) or list(range(suite.n_tasks)); results = []
         for task_id in task_ids:
             if not 0 <= task_id < suite.n_tasks: raise ValueError("task_id out of range: {}".format(task_id))
@@ -63,11 +64,16 @@ class EvaluationRunner:
             schedule = list(self.cfg.benchmark.init_state_ids)
             if not schedule:
                 if not len(states): raise ValueError("task has no init states")
-                schedule = [i % len(states) for i in range(int(self.cfg.benchmark.episodes_per_task))]
+                episode_count = int(self.cfg.benchmark.episodes_per_task)
+                if episode_count > len(states):
+                    raise ValueError("episodes_per_task={} exceeds available init states={}".format(
+                        episode_count, len(states)))
+                schedule = list(range(episode_count))
             if any(i < 0 or i >= len(states) for i in schedule): raise ValueError("init_state_id out of range")
             env = None
             try:
                 env = self.env_factory(task)
+                if hasattr(env, "seed"): env.seed(seed)
                 for episode_index, state_id in enumerate(schedule):
                     result = self._run_episode(env, suite_name, task_id, task, episode_index, state_id, states[state_id])
                     results.append(result); self._append_jsonl(result); self._write_summary(self._summary(suite_name, results))
@@ -79,14 +85,13 @@ class EvaluationRunner:
         if self.preview: self.preview.publish(agentview_rgb=upright_rgb(obs, "agentview_image"), wrist_rgb=upright_rgb(obs, "robot0_eye_in_hand_image"), status=status)
 
     def _run_episode(self, env, suite, task_id, task, episode_index, state_id, state):
-        seed = int(self.cfg.benchmark.seed) + task_id * 100000 + episode_index
-        random.seed(seed); np.random.seed(seed); started = time.monotonic(); steps = 0; success = False; reason = ""
+        seed = int(self.cfg.benchmark.seed)
+        started = time.monotonic(); steps = 0; success = False; reason = ""
         episode_id = "{}/{}/{}".format(suite, task_id, episode_index)
         video_path = Path(str(self.cfg.recording.directory)) / "task_{}_episode_{}_init_{}.mp4".format(task_id, episode_index, state_id)
         wrist_video_path = Path(str(self.cfg.recording.directory)) / "task_{}_episode_{}_init_{}_wrist.mp4".format(
             task_id, episode_index, state_id)
         try:
-            if hasattr(env, "seed"): env.seed(seed)
             env.reset(); obs = env.set_init_state(state)
             warmup = np.array([0, 0, 0, 0, 0, 0, -1], np.float32)
             for warmup_step in range(int(self.cfg.rollout.warmup_steps)):
@@ -99,8 +104,8 @@ class EvaluationRunner:
                 last_recorded = False
                 while steps < int(self.cfg.rollout.max_steps):
                     if time.monotonic() >= deadline: reason = "episode_timeout"; break
-                    action = self.executor.act(obs, steps); obs, _, _, _ = env.step(action.tolist()); steps += 1
-                    success = bool(env.check_success())
+                    action = self.executor.act(obs, steps); obs, _, done, _ = env.step(action.tolist()); steps += 1
+                    success = bool(done)
                     if (steps - 1) % int(self.cfg.recording.stride) == 0:
                         video.append(upright_rgb(obs, "agentview_image"))
                         wrist_video.append(upright_rgb(obs, "robot0_eye_in_hand_image"))

@@ -1,4 +1,4 @@
-"""OpenPI MessagePack/NumPy WebSocket client."""
+"""Adapter from the evaluator protocol to OpenPI's official client."""
 
 import math
 import time
@@ -22,16 +22,16 @@ class PolicyTimeoutError(TimeoutError):
 @register_client("openpi")
 class OpenPIClient(PolicyClient):
     def __init__(self, host: str, port: int, timeout_seconds: float = 30.0,
-                 action_chunk_size=None, image_size=224):
+                 image_size=224, api_key=None):
         if timeout_seconds <= 0:
             raise ValueError("connection.timeout_seconds must be positive")
         self.host, self.port = host, int(port)
         self.timeout_seconds = float(timeout_seconds)
-        self.action_chunk_size = None if action_chunk_size is None else int(action_chunk_size)
+        self.api_key = api_key
         self.image_size = int(image_size)
         if self.image_size <= 0:
             raise ValueError("inference.image_size must be positive")
-        self._connection = None
+        self._policy = None
         self._metadata: Dict[str, Any] = {}
 
     @classmethod
@@ -41,31 +41,23 @@ class OpenPIClient(PolicyClient):
             raise ValueError("openpi connection.host and connection.port are required")
         inference = cfg.get("inference", {})
         return cls(connection["host"], connection["port"], connection.get("timeout_seconds", 30),
-                   inference.get("action_chunk_size"), inference.get("image_size", 224))
+                   inference.get("image_size", 224), connection.get("api_key"))
 
     @staticmethod
-    def _codec():
+    def _policy_class():
         try:
-            from openpi_client import msgpack_numpy
+            from openpi_client.websocket_client_policy import WebsocketClientPolicy
         except ImportError as exc:
             raise ImportError("OpenPIClient requires openpi-client==0.1.2") from exc
-        return msgpack_numpy
+        return WebsocketClientPolicy
 
     def _connect(self):
-        if self._connection is not None:
+        if self._policy is not None:
             return
         try:
-            from websockets.sync.client import connect
-            self._connection = connect(
-                "ws://{}:{}".format(self.host, self.port),
-                open_timeout=self.timeout_seconds,
-                close_timeout=self.timeout_seconds,
-            )
-            raw = self._connection.recv(timeout=self.timeout_seconds)
-            self._metadata = dict(self._codec().unpackb(raw))
-        except TimeoutError as exc:
-            self.close()
-            raise PolicyTimeoutError("timed out connecting to policy server") from exc
+            policy = self._policy_class()(self.host, self.port, api_key=self.api_key)
+            self._metadata = dict(policy.get_server_metadata())
+            self._policy = policy
         except Exception as exc:
             self.close()
             raise PolicyConnectionError("policy connection failed: {}".format(exc)) from exc
@@ -75,26 +67,28 @@ class OpenPIClient(PolicyClient):
         return ClientInfo(True, "openpi", str(self._metadata.get("model_name", "")), dict(self._metadata))
 
     def close(self):
-        connection, self._connection = self._connection, None
-        if connection is not None:
+        policy, self._policy = self._policy, None
+        if policy is not None:
             try:
-                connection.close()
+                # openpi-client 0.1.2 doesn't expose close(), but owns this
+                # connection. Prefer the public method when a future release adds it.
+                close = getattr(policy, "close", None)
+                if close is not None:
+                    close()
+                else:
+                    policy._ws.close()
             except Exception:
                 pass
 
     def reset(self, episode_id: str, instruction: str) -> None:
-        self._episode_id = episode_id
-        self._instruction = instruction
+        self._connect()
+        self._policy.reset()
 
     def infer(self, request: PolicyRequest) -> PolicyResponse:
         self._connect()
         payload = self._default_request_adapter(request)
         try:
-            self._connection.send(self._codec().packb(payload))
-            raw = self._connection.recv(timeout=self.timeout_seconds)
-            if isinstance(raw, str):
-                raise ValueError(raw)
-            result = self._codec().unpackb(raw)
+            result = self._policy.infer(payload)
         except TimeoutError as exc:
             self.close()
             raise PolicyTimeoutError("policy inference timed out") from exc
@@ -148,15 +142,12 @@ class OpenPIClient(PolicyClient):
             self._quat2axisangle(obs.eef_quat),
             obs.gripper_qpos,
         ))
-        result = {
+        return {
             "observation/image": image,
             "observation/wrist_image": wrist_image,
             "observation/state": state,
             "prompt": request.instruction,
         }
-        if self.action_chunk_size is not None:
-            result["action_chunk_size"] = self.action_chunk_size
-        return result
 
     @staticmethod
     def _quat2axisangle(quat) -> np.ndarray:

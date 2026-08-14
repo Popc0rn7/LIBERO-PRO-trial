@@ -20,7 +20,7 @@ python -m libero.evaluation.eval policy=mock benchmark.task_ids='[0]' benchmark.
 ```bash
 python -m libero.evaluation.eval policy=pi0 \
   policy.connection.host=127.0.0.1 policy.connection.port=8000 \
-  policy.inference.action_chunk_size=16 rollout.execute_horizon=8 \
+  rollout.execute_horizon=8 \
   benchmark.suite=libero_goal benchmark.task_ids='[0,1]' \
   benchmark.init_state_ids='[0,2]' \
   recording.enabled=true live_preview.enabled=true \
@@ -29,7 +29,7 @@ python -m libero.evaluation.eval policy=pi0 \
 
 默认使用 MuJoCo EGL 离屏渲染。只有系统安装了 OSMesa 时才覆盖 `environment.render_backend=osmesa`。
 
-`benchmark.init_state_ids=[]` 时，每个 task 根据 `episodes_per_task` 顺序选择初态；显式提供列表时，该列表直接决定 episode schedule 和数量。
+`benchmark.init_state_ids=[]` 时，每个 task 根据 `episodes_per_task` 顺序选择不重复初态；默认与 OpenPI-LIBERO 一致评测 50 个初态。请求数量超过可用初态时会报错，不会循环复用。显式提供列表时，该列表直接决定 episode schedule 和数量。每个 task 环境固定使用 `benchmark.seed`（默认 7），不会在 episode 之间重新派生 seed。
 
 ## Helper
 
@@ -84,9 +84,9 @@ class MyClient(PolicyClient):
     def close(self): ...
 ```
 
-Libero-pro协议定义在 `protocol.py` ，规范 evaluator 内部数据结构。Client 完全控制 wire protocol、传输、序列化、图像与 state 预处理、归一化和 action decoding。`policy.inference.action_chunk_size` 只提供给 Client；Evaluator 仅通过 `rollout.execute_horizon` 决定一个 chunk 最多执行多少个动作。
+Libero-pro协议定义在 `protocol.py` ，规范 evaluator 内部数据结构。Client 完全控制 wire protocol、传输、序列化、图像与 state 预处理、归一化和 action decoding。Evaluator 通过 `rollout.execute_horizon` 决定一个 chunk 最多执行多少个动作；OpenPI 返回的 chunk 长度由服务端模型配置决定。
 
-Action 必须是非空、有限、位于 `[-1, 1]` 的 `float32[T, 7]`，类型为 `delta_ee`。非法响应只终止当前 episode；单次请求 timeout 来自 `policy.connection.timeout_seconds`，episode 总 timeout 来自 `rollout.episode_timeout_seconds`。
+Action 必须是非空、有限、位于 `[-1, 1]` 的 `float32[T, 7]`，类型为 `delta_ee`。非法响应只终止当前 episode；OpenPI 的连接和请求行为由官方 `WebsocketClientPolicy` 管理，episode 总 timeout 来自 `rollout.episode_timeout_seconds`。
 
 ## 常见问题
 
