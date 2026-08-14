@@ -4,9 +4,9 @@ defaults:
 benchmark:
   suite: libero_goal
   task_ids: []
-  episodes_per_task: 10
+  episodes_per_task: 50
   init_state_ids: []
-  seed: 0
+  seed: 7
 perturbation:
   enabled: false
 rollout:

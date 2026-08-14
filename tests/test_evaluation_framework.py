@@ -89,6 +89,48 @@ def test_openpi_response_maps_upstream_server_timing():
     assert metadata["policy_timing"]["infer_ms"] == 88.5
 
 
+def test_openpi_client_delegates_transport_to_upstream(monkeypatch):
+    events = []
+
+    class Connection:
+        def close(self): events.append("close")
+
+    class UpstreamPolicy:
+        def __init__(self, host, port, api_key=None):
+            events.append(("connect", host, port, api_key))
+            self._ws = Connection()
+
+        def get_server_metadata(self):
+            return {"model_name": "upstream"}
+
+        def reset(self):
+            events.append("reset")
+
+        def infer(self, payload):
+            events.append(("infer", payload["prompt"]))
+            return {"actions": np.zeros((2, 7), np.float32)}
+
+    monkeypatch.setattr(OpenPIClient, "_policy_class", staticmethod(lambda: UpstreamPolicy))
+    client = OpenPIClient("policy.test", 8000, api_key="secret", image_size=2)
+    assert client.check().model_name == "upstream"
+    client.reset("episode", "open drawer")
+
+    obs = RawObservation(
+        np.zeros((2, 2, 3), np.uint8), np.zeros((2, 2, 3), np.uint8),
+        np.zeros(3), np.array([0, 0, 0, 1]), np.zeros(2), np.zeros(7),
+    )
+    response = client.infer(PolicyRequest("episode", 0, "open drawer", obs))
+    client.close()
+
+    assert response.actions.shape == (2, 7)
+    assert events == [
+        ("connect", "policy.test", 8000, "secret"),
+        "reset",
+        ("infer", "open drawer"),
+        "close",
+    ]
+
+
 class Task:
     name = "task"
     language = "do task"
@@ -103,12 +145,13 @@ class Suite:
 class Env:
     closed = 0
     action_types = []
-    def seed(self, seed): pass
+    seeds = []
+    def seed(self, seed): Env.seeds.append(seed)
     def reset(self): return None
     def set_init_state(self, state): return _obs()
     def step(self, action):
         Env.action_types.append(type(action))
-        return _obs(), 0, False, {}
+        return _obs(), 0, True, {}
     def check_success(self): return True
     def close(self): Env.closed += 1
 
@@ -122,6 +165,7 @@ def _obs():
 
 def test_runner_multiple_tasks_outputs_and_closes(tmp_path):
     Env.action_types = []
+    Env.seeds = []
     policy = NS(name="mock", action={"type": "delta_ee", "dim": 7,
                                       "controller": "OSC_POSE", "control_frequency_hz": 20})
     cfg = NS(policy=policy, benchmark=NS(suite="suite", task_ids=[0, 1], episodes_per_task=1, init_state_ids=[], seed=3),
@@ -137,6 +181,7 @@ def test_runner_multiple_tasks_outputs_and_closes(tmp_path):
     summary, results = EvaluationRunner(cfg, client, lambda _: Suite(), lambda _: Env()).run()
     assert summary["success_rate"] == 1.0 and len(results) == 2
     assert Env.closed == 2
+    assert Env.seeds == [3, 3]
     assert Env.action_types and all(action_type is list for action_type in Env.action_types)
     assert len((tmp_path / "episodes.jsonl").read_text().splitlines()) == 2
     assert json.loads((tmp_path / "summary.json").read_text())["successes"] == 2
@@ -144,3 +189,22 @@ def test_runner_multiple_tasks_outputs_and_closes(tmp_path):
     assert episode["prompt"] == "do task"
     assert episode["video_path"] == ""
     assert episode["wrist_video_path"] == ""
+
+
+def test_runner_rejects_cycling_more_episodes_than_init_states(tmp_path):
+    policy = NS(name="mock", action={"type": "delta_ee", "dim": 7,
+                                      "controller": "OSC_POSE", "control_frequency_hz": 20})
+    cfg = NS(policy=policy, benchmark=NS(suite="suite", task_ids=[0], episodes_per_task=2,
+                                         init_state_ids=[], seed=7),
+             rollout=NS(execute_horizon=2, warmup_steps=0, max_steps=3, episode_timeout_seconds=10),
+             recording=NS(enabled=False, directory=str(tmp_path/"videos"), fps=10, stride=1),
+             live_preview=NS(stride=1),
+             output=NS(directory=str(tmp_path), episodes_file="episodes.jsonl", summary_file="summary.json"))
+
+    class Client(PolicyClient):
+        def check(self): return ClientInfo(True, "test")
+        def reset(self, episode_id, instruction): pass
+        def infer(self, request): return PolicyResponse(np.zeros((2, 7), np.float32))
+
+    with pytest.raises(ValueError, match="exceeds available init states"):
+        EvaluationRunner(cfg, Client(), lambda _: Suite(), lambda _: Env()).run()
