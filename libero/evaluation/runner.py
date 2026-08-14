@@ -24,6 +24,7 @@ def latency_stats(values):
 @dataclass
 class EpisodeResult:
     policy: str; suite: str; task_id: int; task: str; prompt: str; episode_id: str
+    base_suite: str; effective_suite: str; perturbation_type: str
     init_state_id: int; seed: int; success: bool; steps: int; duration_seconds: float
     policy_query_count: int; termination_reason: str = ""
     round_trip_latency_ms: list = field(default_factory=list)
@@ -33,10 +34,15 @@ class EpisodeResult:
 
 
 class EvaluationRunner:
-    def __init__(self, cfg, client, suite_factory=None, env_factory=None, preview=None):
+    def __init__(self, cfg, client, suite_factory=None, env_factory=None, preview=None, suite_identity=None):
         self.cfg, self.client, self.preview = cfg, client, preview
         self.suite_factory = suite_factory or self._default_suite_factory
         self.env_factory = env_factory or self._default_env_factory
+        if suite_identity is None:
+            suite = str(cfg.benchmark.suite)
+            from .perturbation import EvaluationSuite
+            suite_identity = EvaluationSuite(suite, suite, "none")
+        self.suite_identity = suite_identity
         self.executor = ActionChunkExecutor(client, int(cfg.rollout.execute_horizon), self._action_spec(cfg.policy.action))
 
     @staticmethod
@@ -55,7 +61,8 @@ class EvaluationRunner:
             horizon=int(self.cfg.rollout.max_steps) + int(self.cfg.rollout.warmup_steps) + 20, ignore_done=True)
 
     def run(self):
-        suite_name = str(self.cfg.benchmark.suite); suite = self.suite_factory(suite_name)
+        identity = self.suite_identity; suite_name = identity.effective_suite
+        suite = self.suite_factory(suite_name)
         seed = int(self.cfg.benchmark.seed); random.seed(seed); np.random.seed(seed)
         task_ids = list(self.cfg.benchmark.task_ids) or list(range(suite.n_tasks)); results = []
         for task_id in task_ids:
@@ -75,18 +82,19 @@ class EvaluationRunner:
                 env = self.env_factory(task)
                 if hasattr(env, "seed"): env.seed(seed)
                 for episode_index, state_id in enumerate(schedule):
-                    result = self._run_episode(env, suite_name, task_id, task, episode_index, state_id, states[state_id])
-                    results.append(result); self._append_jsonl(result); self._write_summary(self._summary(suite_name, results))
+                    result = self._run_episode(env, identity, task_id, task, episode_index, state_id, states[state_id])
+                    results.append(result); self._append_jsonl(result); self._write_summary(self._summary(identity, results))
             finally:
                 if env is not None: env.close()
-        summary = self._summary(suite_name, results); self._write_summary(summary); return summary, results
+        summary = self._summary(identity, results); self._write_summary(summary); return summary, results
 
     def _publish(self, obs, status):
         if self.preview: self.preview.publish(agentview_rgb=upright_rgb(obs, "agentview_image"), wrist_rgb=upright_rgb(obs, "robot0_eye_in_hand_image"), status=status)
 
-    def _run_episode(self, env, suite, task_id, task, episode_index, state_id, state):
+    def _run_episode(self, env, identity, task_id, task, episode_index, state_id, state):
+        suite = identity.effective_suite
         seed = int(self.cfg.benchmark.seed)
-        started = time.monotonic(); steps = 0; success = False; reason = ""
+        started = time.monotonic(); steps = 0; success = False; reason = ""; prompt = ""
         episode_id = "{}/{}/{}".format(suite, task_id, episode_index)
         video_path = Path(str(self.cfg.recording.directory)) / "task_{}_episode_{}_init_{}.mp4".format(task_id, episode_index, state_id)
         wrist_video_path = Path(str(self.cfg.recording.directory)) / "task_{}_episode_{}_init_{}_wrist.mp4".format(
@@ -97,7 +105,8 @@ class EvaluationRunner:
             for warmup_step in range(int(self.cfg.rollout.warmup_steps)):
                 obs, _, _, _ = env.step(warmup)
                 if warmup_step % int(self.cfg.live_preview.stride) == 0: self._publish(obs, {"phase":"warmup", "episode_id":episode_id})
-            self.executor.reset(episode_id, task.language)
+            prompt = str(env.language_instruction)
+            self.executor.reset(episode_id, prompt)
             with VideoRecorder(video_path, bool(self.cfg.recording.enabled), int(self.cfg.recording.fps)) as video, \
                     VideoRecorder(wrist_video_path, bool(self.cfg.recording.enabled), int(self.cfg.recording.fps)) as wrist_video:
                 deadline = time.monotonic() + float(self.cfg.rollout.episode_timeout_seconds)
@@ -120,7 +129,8 @@ class EvaluationRunner:
                 self._publish(obs, {"phase":"episode_complete", "step":steps, "success":success, "termination_reason":reason})
         except Exception as exc:
             reason = "{}: {}".format(type(exc).__name__, exc)
-        return EpisodeResult(str(self.cfg.policy.name), suite, task_id, task.name, task.language, episode_id, state_id, seed,
+        return EpisodeResult(str(self.cfg.policy.name), suite, task_id, task.name, prompt, episode_id,
+            identity.base_suite, identity.effective_suite, identity.perturbation_type, state_id, seed,
             success, steps, time.monotonic()-started, self.executor.query_count, reason,
             list(self.executor.round_trip_latency_ms), list(self.executor.server_inference_latency_ms),
             str(video_path) if bool(self.cfg.recording.enabled) else "",
@@ -129,9 +139,10 @@ class EvaluationRunner:
     def _append_jsonl(self, result):
         path = Path(str(self.cfg.output.directory)) / str(self.cfg.output.episodes_file); path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as stream: stream.write(json.dumps(asdict(result), ensure_ascii=False) + "\n")
-    def _summary(self, suite, results):
+    def _summary(self, identity, results):
         success = sum(r.success for r in results); rt = sum((r.round_trip_latency_ms for r in results), []); server = sum((r.server_inference_latency_ms for r in results), [])
-        return {"policy":str(self.cfg.policy.name), "suite":suite, "episodes":len(results), "successes":success,
+        return {"policy":str(self.cfg.policy.name), "suite":identity.effective_suite, **identity.as_dict(),
+            "episodes":len(results), "successes":success,
             "success_rate":success/len(results) if results else 0.0, "policy_query_count":sum(r.policy_query_count for r in results),
             "round_trip_latency":latency_stats(rt), "server_inference_latency":latency_stats(server)}
     def _write_summary(self, summary):

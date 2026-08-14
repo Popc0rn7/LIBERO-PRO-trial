@@ -21,7 +21,7 @@ python -m libero.evaluation.eval policy=mock benchmark.task_ids='[0]' benchmark.
 python -m libero.evaluation.eval policy=pi0 \
   policy.connection.host=127.0.0.1 policy.connection.port=8000 \
   rollout.execute_horizon=8 \
-  benchmark.suite=libero_goal benchmark.task_ids='[0,1]' \
+  benchmark.evaluation_config_path=evaluation_config.yaml benchmark.task_ids='[0,1]' \
   benchmark.init_state_ids='[0,2]' \
   recording.enabled=true live_preview.enabled=true \
   output.directory=outputs/my_eval
@@ -29,7 +29,45 @@ python -m libero.evaluation.eval policy=pi0 \
 
 默认使用 MuJoCo EGL 离屏渲染。只有系统安装了 OSMesa 时才覆盖 `environment.render_backend=osmesa`。
 
-`benchmark.init_state_ids=[]` 时，每个 task 根据 `episodes_per_task` 顺序选择不重复初态；默认与 OpenPI-LIBERO 一致评测 50 个初态。请求数量超过可用初态时会报错，不会循环复用。显式提供列表时，该列表直接决定 episode schedule 和数量。每个 task 环境固定使用 `benchmark.seed`（默认 7），不会在 episode 之间重新派生 seed。
+`benchmark.init_state_ids=[]` 时，每个 task 根据 `episodes_per_task` 顺序选择不重复初态；默认配置只运行 1 个初态，方便 smoke test。完整评测可设置 `benchmark.episodes_per_task=50`。请求数量超过可用初态时会报错，不会循环复用。显式提供列表时，该列表直接决定 episode schedule 和数量。每个 task 环境固定使用 `benchmark.seed`（默认 7），不会在 episode 之间重新派生 seed。
+
+## Perturbation
+
+扰动由外部 `evaluation_config.yaml` 统一配置，Evaluator 只接收它的路径：
+
+```bash
+python -m libero.evaluation.eval \
+  benchmark.evaluation_config_path=evaluation_config.yaml
+```
+
+配置中用 `task_suite_name` 指定基础 suite，并通过 `use_*` 开启扰动：
+
+```yaml
+task_suite_name: libero_goal
+
+use_environment: true
+use_swap: false
+use_object: false
+use_language: false
+use_task: false
+
+perturbation_mapping:
+  use_environment: env
+  use_swap: swap
+  use_object: object
+  use_language: lan
+  use_task: task
+```
+
+单扰动的最终 suite 名称由 `task_suite_name` 和 `perturbation_mapping` 组成，例如上面的配置对应 `libero_goal_env`。多个非 task 扰动组合时使用 `libero_goal_temp`；`use_task` 不能与其他扰动同时启用。
+
+启动时，[`perturbation.py`](perturbation.py) 会读取这份配置：
+
+- BDDL 和 `.pruned_init` 都存在时直接复用；
+- 只有 `.pruned_init` 缺失时，仅运行 `generate_init_states.py`；
+- BDDL 缺失时，先运行对应 Perturbator，再生成 `.pruned_init`。
+
+生成完成后，任务、语言、目标条件和初始状态均由 LIBERO 原生 benchmark 和 BDDL parser 加载。根目录的 `perturbation.py` 仅保留为原仓库示例，evaluation 不会调用它。
 
 ## Helper
 
@@ -43,7 +81,7 @@ python -m libero.evaluation.mock_server --mode noop --chunk-size 16
 
 ### Record & Live-Preview & Video Render
 
-通过开启 `config/eval.yaml` 中 `recording` 和 `live_preview` 可以打开视频保存和浏览器在线预览功能。
+通过开启 `configs/eval.yaml` 中 `recording` 和 `live_preview` 可以打开视频保存和浏览器在线预览功能。
 
 为提高录制视频的可视化效果，额外提供一个脚本加工录制的视频，Usage: 
 
@@ -54,15 +92,19 @@ python scripts/render_eval_videos.py \
 
 ## 架构
 
-Evaluator 负责 Hydra 配置、LIBERO task/init state、环境生命周期、同步 rollout、action 执行上限、录像、预览和结果统计。`PolicyClient` 负责连接策略服务、健康检查、超时、wire protocol、序列化、模型预处理和 action decoding。两者只通过 `PolicyRequest`、`PolicyResponse`、`RawObservation` 和 `ActionSpec` 交换内部 Python 数据。
+Evaluator 先准备扰动数据，再通过 LIBERO 创建环境并执行 rollout。`PolicyClient` 负责与策略服务通信及模型输入输出转换。
 
 ```text
-Hydra CLI → EvaluationRunner → ActionChunkExecutor → PolicyClient → Policy Server
-                    ↓                                      ↑
-             LIBERO environment              WebSocket / Client-owned protocol
+evaluation_config.yaml
+        ↓
+perturbation.py（复用或生成 BDDL / .pruned_init）
+        ↓
+LIBERO benchmark + environment
+        ↓ observation                         ↑ action
+EvaluationRunner → ActionChunkExecutor → PolicyClient → Policy Server
 ```
 
-Evaluator 不规定 HTTP/WebSocket 字段，不翻转或缩放输入图像，不修改四元数或拼接 state vector，也不裁剪 action。Client 返回的 action 必须已经能够直接传给 `env.step()`。
+Evaluator 管理环境生命周期、episode schedule、action chunk 执行、录像和结果统计。`PolicyClient` 管理连接、wire protocol、图像与状态预处理及 action decoding；双方只通过 `PolicyRequest` 和 `PolicyResponse` 交换数据。
 
 ## 新增 Policy
 

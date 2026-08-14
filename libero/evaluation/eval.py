@@ -64,7 +64,11 @@ def check_render_backend(backend):
 
 
 def run(cfg):
-    validate_config(cfg); paths = prepare_environment(cfg); check_render_backend(str(cfg.environment.render_backend))
+    validate_config(cfg)
+    paths = prepare_environment(cfg)
+    from .perturbation import prepare_evaluation
+    identity = prepare_evaluation(str(cfg.benchmark.evaluation_config_path))
+    check_render_backend(str(cfg.environment.render_backend))
     output = Path(str(cfg.output.directory)); output.mkdir(parents=True, exist_ok=True)
     (output/"config.yaml").write_text(OmegaConf.to_yaml(cfg, resolve=True), encoding="utf-8")
     client = create_client(cfg.policy); preview = None
@@ -75,10 +79,11 @@ def run(cfg):
             preview = LivePreviewServer(host=str(cfg.live_preview.host), port=int(cfg.live_preview.port),
                                         refresh_hz=float(cfg.live_preview.refresh_hz)); url = preview.start()
         else: url = None
-        metadata = {"client": info.__dict__, "libero_paths": paths, "live_preview_url": url,
+        metadata = {**identity.as_dict(), "suite":identity.effective_suite,
+                    "client": info.__dict__, "libero_paths": paths, "live_preview_url": url,
                     "python":sys.version, "platform":platform.platform()}
         (output/"metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-        return EvaluationRunner(cfg, client, preview=preview).run()
+        return EvaluationRunner(cfg, client, preview=preview, suite_identity=identity).run()
     finally:
         if preview is not None: preview.close()
         client.close()

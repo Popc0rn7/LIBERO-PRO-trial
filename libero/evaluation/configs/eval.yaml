@@ -1,14 +1,12 @@
 defaults:
-  - policy: mock
+  - policy: pi05
   - _self_
 benchmark:
-  suite: libero_goal
-  task_ids: []
-  episodes_per_task: 50
+  evaluation_config_path: evaluation_config.yaml
+  task_ids: [0]
+  episodes_per_task: 1
   init_state_ids: []
   seed: 7
-perturbation:
-  enabled: false
 rollout:
   execute_horizon: 5
   warmup_steps: 10
