@@ -100,7 +100,7 @@ class OpenPIClient(PolicyClient):
         if not isinstance(result, dict) or "actions" not in result:
             raise ValueError("OpenPI response does not contain 'actions'")
         spec_dict = result.get("action_spec", {})
-        spec = ActionSpec(**spec_dict) if spec_dict else request.action_spec
+        spec = ActionSpec(**spec_dict) if spec_dict else ActionSpec()
         return PolicyResponse(np.asarray(result["actions"]), spec,
                               self._response_metadata(result))
 

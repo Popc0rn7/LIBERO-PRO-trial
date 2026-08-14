@@ -44,11 +44,8 @@ class ActionChunkExecutor:
             raise RuntimeError("reset must be called before act")
         if not self._queue:
             request = PolicyRequest(
-                episode_id=self._episode_id,
-                step=step,
                 instruction=self._instruction,
                 observation=RawObservation.from_libero(obs),
-                action_spec=self.action_spec,
             )
             import time
             started = time.monotonic()
