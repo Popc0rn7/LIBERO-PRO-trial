@@ -18,3 +18,5 @@ logs/
 *.mp4
 libero.egg-info/
 .vscode/
+libero/libero/bddl_files/libero_goal_env
+libero/libero/init_files/libero_goal_env

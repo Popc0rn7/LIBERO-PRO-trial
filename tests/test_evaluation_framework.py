@@ -9,6 +9,9 @@ from libero.evaluation import (ActionSpec, ClientInfo, EvaluationRunner, PolicyC
 from libero.evaluation.clients import available_clients, create_client, register_client
 from libero.evaluation.clients.openpi_client import OpenPIClient
 from libero.evaluation.policy_client import PolicyClient
+from libero.evaluation.perturbation import (
+    EvaluationSuite, prepare_evaluation, resolve_evaluation_suite,
+)
 
 
 def test_builtin_registry_and_unknown_client():
@@ -143,6 +146,7 @@ class Suite:
 
 
 class Env:
+    language_instruction = "instruction parsed from bddl"
     closed = 0
     action_types = []
     seeds = []
@@ -180,13 +184,18 @@ def test_runner_multiple_tasks_outputs_and_closes(tmp_path):
     client = Client()
     summary, results = EvaluationRunner(cfg, client, lambda _: Suite(), lambda _: Env()).run()
     assert summary["success_rate"] == 1.0 and len(results) == 2
+    assert summary["suite"] == summary["effective_suite"] == summary["base_suite"] == "suite"
+    assert summary["perturbation_type"] == "none"
     assert Env.closed == 2
     assert Env.seeds == [3, 3]
     assert Env.action_types and all(action_type is list for action_type in Env.action_types)
     assert len((tmp_path / "episodes.jsonl").read_text().splitlines()) == 2
     assert json.loads((tmp_path / "summary.json").read_text())["successes"] == 2
     episode = json.loads((tmp_path / "episodes.jsonl").read_text().splitlines()[0])
-    assert episode["prompt"] == "do task"
+    assert episode["prompt"] == "instruction parsed from bddl"
+    assert episode["base_suite"] == "suite"
+    assert episode["effective_suite"] == "suite"
+    assert episode["perturbation_type"] == "none"
     assert episode["video_path"] == ""
     assert episode["wrist_video_path"] == ""
 
@@ -208,3 +217,44 @@ def test_runner_rejects_cycling_more_episodes_than_init_states(tmp_path):
 
     with pytest.raises(ValueError, match="exceeds available init states"):
         EvaluationRunner(cfg, Client(), lambda _: Suite(), lambda _: Env()).run()
+
+
+@pytest.mark.parametrize("flag,kind,suffix", [
+    ("use_language", "language", "external_lan"),
+    ("use_object", "object", "external_object"),
+    ("use_swap", "swap", "external_swap"),
+    ("use_task", "task", "external_task"),
+    ("use_environment", "environment", "external_env"),
+])
+def test_perturbation_is_authoritative_for_suite_resolution(flag, kind, suffix):
+    result = resolve_evaluation_suite({
+        "task_suite_name": "libero_goal", flag: True,
+        "perturbation_mapping": {flag: suffix},
+    })
+    assert result == ("libero_goal", "libero_goal_{}".format(suffix), kind)
+
+
+def test_perturbation_with_no_flags_preserves_suite():
+    result = resolve_evaluation_suite({"task_suite_name": "custom_registered_suite"})
+    assert result[:2] == ("custom_registered_suite", "custom_registered_suite")
+
+
+def test_perturbation_uses_temp_suite_for_combined_perturbations():
+    with pytest.raises(ValueError, match="use_task=True cannot be combined"):
+        resolve_evaluation_suite({"task_suite_name": "libero_goal", "use_language": True, "use_task": True})
+
+    result = resolve_evaluation_suite({
+        "task_suite_name": "libero_goal", "use_language": True, "use_object": True})
+    assert result == ("libero_goal", "libero_goal_temp", "object+language")
+
+
+def test_prepare_evaluation_reuses_complete_suite_data(tmp_path):
+    bddl = tmp_path / "bddl" / "suite" / "task.bddl"
+    init_state = tmp_path / "init" / "suite" / "task.pruned_init"
+    bddl.parent.mkdir(parents=True); init_state.parent.mkdir(parents=True)
+    bddl.touch(); init_state.touch()
+    config = tmp_path / "evaluation.yaml"
+    config.write_text(
+        "task_suite_name: suite\nbddl_files_path: {}\ninit_file_dir: {}\n".format(
+            tmp_path / "bddl", tmp_path / "init"))
+    assert prepare_evaluation(config) == EvaluationSuite("suite", "suite", "none")
