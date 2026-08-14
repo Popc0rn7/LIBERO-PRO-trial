@@ -61,9 +61,8 @@ def test_openpi_libero_request_matches_upstream_protocol():
         # xyzw quaternion for a 90-degree rotation around z.
         eef_quat=np.array([0, 0, np.sqrt(0.5), np.sqrt(0.5)], dtype=np.float32),
         gripper_qpos=np.array([0.1, 0.2], dtype=np.float32),
-        joint_pos=np.arange(7, dtype=np.float32),
     )
-    request = PolicyRequest("episode", 4, "open drawer", obs)
+    request = PolicyRequest("open drawer", obs)
     payload = OpenPIClient("localhost", 8000, image_size=2)._default_request_adapter(request)
 
     assert set(payload) == {
@@ -120,9 +119,9 @@ def test_openpi_client_delegates_transport_to_upstream(monkeypatch):
 
     obs = RawObservation(
         np.zeros((2, 2, 3), np.uint8), np.zeros((2, 2, 3), np.uint8),
-        np.zeros(3), np.array([0, 0, 0, 1]), np.zeros(2), np.zeros(7),
+        np.zeros(3), np.array([0, 0, 0, 1]), np.zeros(2),
     )
-    response = client.infer(PolicyRequest("episode", 0, "open drawer", obs))
+    response = client.infer(PolicyRequest("open drawer", obs))
     client.close()
 
     assert response.actions.shape == (2, 7)

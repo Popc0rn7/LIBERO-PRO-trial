@@ -1,7 +1,7 @@
 """Internal, transport-neutral data passed between evaluator and clients."""
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping
 
 import numpy as np
 
@@ -25,7 +25,6 @@ class RawObservation:
     eef_pos: np.ndarray
     eef_quat: np.ndarray
     gripper_qpos: np.ndarray
-    joint_pos: np.ndarray
 
     @classmethod
     def from_libero(cls, obs: Mapping[str, Any]) -> "RawObservation":
@@ -35,21 +34,13 @@ class RawObservation:
             eef_pos=np.asarray(obs["robot0_eef_pos"], dtype=np.float32),
             eef_quat=np.asarray(obs["robot0_eef_quat"], dtype=np.float32),
             gripper_qpos=np.asarray(obs["robot0_gripper_qpos"], dtype=np.float32),
-            joint_pos=np.asarray(obs["robot0_joint_pos"], dtype=np.float32),
         )
-
-    def as_dict(self) -> Dict[str, np.ndarray]:
-        return dict(vars(self))
 
 
 @dataclass
 class PolicyRequest:
-    episode_id: str
-    step: int
     instruction: str
     observation: RawObservation
-    action_spec: ActionSpec = field(default_factory=ActionSpec)
-    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

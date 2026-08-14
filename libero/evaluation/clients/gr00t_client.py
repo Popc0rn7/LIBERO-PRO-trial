@@ -155,7 +155,7 @@ class Gr00tClient(PolicyClient):
         action, info = result
         actions = self._decode_actions(action)
         metadata = dict(info) if isinstance(info, dict) else {"server_info": info}
-        return PolicyResponse(actions, request.action_spec, metadata)
+        return PolicyResponse(actions, metadata=metadata)
 
     def _request_adapter(self, request: PolicyRequest) -> Dict[str, Any]:
         obs = request.observation
