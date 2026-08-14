@@ -23,12 +23,13 @@ def latency_stats(values):
 
 @dataclass
 class EpisodeResult:
-    policy: str; suite: str; task_id: int; task: str; episode_id: str
+    policy: str; suite: str; task_id: int; task: str; prompt: str; episode_id: str
     init_state_id: int; seed: int; success: bool; steps: int; duration_seconds: float
     policy_query_count: int; termination_reason: str = ""
     round_trip_latency_ms: list = field(default_factory=list)
     server_inference_latency_ms: list = field(default_factory=list)
     video_path: str = ""
+    wrist_video_path: str = ""
 
 
 class EvaluationRunner:
@@ -82,6 +83,8 @@ class EvaluationRunner:
         random.seed(seed); np.random.seed(seed); started = time.monotonic(); steps = 0; success = False; reason = ""
         episode_id = "{}/{}/{}".format(suite, task_id, episode_index)
         video_path = Path(str(self.cfg.recording.directory)) / "task_{}_episode_{}_init_{}.mp4".format(task_id, episode_index, state_id)
+        wrist_video_path = Path(str(self.cfg.recording.directory)) / "task_{}_episode_{}_init_{}_wrist.mp4".format(
+            task_id, episode_index, state_id)
         try:
             if hasattr(env, "seed"): env.seed(seed)
             env.reset(); obs = env.set_init_state(state)
@@ -90,26 +93,33 @@ class EvaluationRunner:
                 obs, _, _, _ = env.step(warmup)
                 if warmup_step % int(self.cfg.live_preview.stride) == 0: self._publish(obs, {"phase":"warmup", "episode_id":episode_id})
             self.executor.reset(episode_id, task.language)
-            with VideoRecorder(video_path, bool(self.cfg.recording.enabled), int(self.cfg.recording.fps)) as video:
+            with VideoRecorder(video_path, bool(self.cfg.recording.enabled), int(self.cfg.recording.fps)) as video, \
+                    VideoRecorder(wrist_video_path, bool(self.cfg.recording.enabled), int(self.cfg.recording.fps)) as wrist_video:
                 deadline = time.monotonic() + float(self.cfg.rollout.episode_timeout_seconds)
                 last_recorded = False
                 while steps < int(self.cfg.rollout.max_steps):
                     if time.monotonic() >= deadline: reason = "episode_timeout"; break
                     action = self.executor.act(obs, steps); obs, _, _, _ = env.step(action.tolist()); steps += 1
                     success = bool(env.check_success())
-                    if (steps - 1) % int(self.cfg.recording.stride) == 0: video.append(upright_rgb(obs, "agentview_image")); last_recorded = True
+                    if (steps - 1) % int(self.cfg.recording.stride) == 0:
+                        video.append(upright_rgb(obs, "agentview_image"))
+                        wrist_video.append(upright_rgb(obs, "robot0_eye_in_hand_image"))
+                        last_recorded = True
                     else: last_recorded = False
                     if (steps - 1) % int(self.cfg.live_preview.stride) == 0: self._publish(obs, {"phase":"rollout", "step":steps, "success":success})
                     if success: reason = "success"; break
                 if not success and not reason: reason = "max_steps"
-                if steps and not last_recorded: video.append(upright_rgb(obs, "agentview_image"))
+                if steps and not last_recorded:
+                    video.append(upright_rgb(obs, "agentview_image"))
+                    wrist_video.append(upright_rgb(obs, "robot0_eye_in_hand_image"))
                 self._publish(obs, {"phase":"episode_complete", "step":steps, "success":success, "termination_reason":reason})
         except Exception as exc:
             reason = "{}: {}".format(type(exc).__name__, exc)
-        return EpisodeResult(str(self.cfg.policy.name), suite, task_id, task.name, episode_id, state_id, seed,
+        return EpisodeResult(str(self.cfg.policy.name), suite, task_id, task.name, task.language, episode_id, state_id, seed,
             success, steps, time.monotonic()-started, self.executor.query_count, reason,
             list(self.executor.round_trip_latency_ms), list(self.executor.server_inference_latency_ms),
-            str(video_path) if bool(self.cfg.recording.enabled) else "")
+            str(video_path) if bool(self.cfg.recording.enabled) else "",
+            str(wrist_video_path) if bool(self.cfg.recording.enabled) else "")
 
     def _append_jsonl(self, result):
         path = Path(str(self.cfg.output.directory)) / str(self.cfg.output.episodes_file); path.parent.mkdir(parents=True, exist_ok=True)

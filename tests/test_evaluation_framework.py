@@ -140,3 +140,7 @@ def test_runner_multiple_tasks_outputs_and_closes(tmp_path):
     assert Env.action_types and all(action_type is list for action_type in Env.action_types)
     assert len((tmp_path / "episodes.jsonl").read_text().splitlines()) == 2
     assert json.loads((tmp_path / "summary.json").read_text())["successes"] == 2
+    episode = json.loads((tmp_path / "episodes.jsonl").read_text().splitlines()[0])
+    assert episode["prompt"] == "do task"
+    assert episode["video_path"] == ""
+    assert episode["wrist_video_path"] == ""
