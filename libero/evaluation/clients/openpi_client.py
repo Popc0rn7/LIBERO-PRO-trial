@@ -1,5 +1,6 @@
 """OpenPI MessagePack/NumPy WebSocket client."""
 
+import math
 import time
 from typing import Any, Dict
 
@@ -20,12 +21,16 @@ class PolicyTimeoutError(TimeoutError):
 
 @register_client("openpi")
 class OpenPIClient(PolicyClient):
-    def __init__(self, host: str, port: int, timeout_seconds: float = 30.0, action_chunk_size=None):
+    def __init__(self, host: str, port: int, timeout_seconds: float = 30.0,
+                 action_chunk_size=None, image_size=224):
         if timeout_seconds <= 0:
             raise ValueError("connection.timeout_seconds must be positive")
         self.host, self.port = host, int(port)
         self.timeout_seconds = float(timeout_seconds)
         self.action_chunk_size = None if action_chunk_size is None else int(action_chunk_size)
+        self.image_size = int(image_size)
+        if self.image_size <= 0:
+            raise ValueError("inference.image_size must be positive")
         self._connection = None
         self._metadata: Dict[str, Any] = {}
 
@@ -36,7 +41,7 @@ class OpenPIClient(PolicyClient):
             raise ValueError("openpi connection.host and connection.port are required")
         inference = cfg.get("inference", {})
         return cls(connection["host"], connection["port"], connection.get("timeout_seconds", 30),
-                   inference.get("action_chunk_size"))
+                   inference.get("action_chunk_size"), inference.get("image_size", 224))
 
     @staticmethod
     def _codec():
@@ -103,21 +108,62 @@ class OpenPIClient(PolicyClient):
         spec_dict = result.get("action_spec", {})
         spec = ActionSpec(**spec_dict) if spec_dict else request.action_spec
         return PolicyResponse(np.asarray(result["actions"]), spec,
-                              dict(result.get("metadata", {})))
+                              self._response_metadata(result))
+
+    @staticmethod
+    def _response_metadata(result: Dict[str, Any]) -> Dict[str, Any]:
+        """Preserve OpenPI timing fields and expose server inference uniformly."""
+        metadata = dict(result.get("metadata", {}))
+        for key in ("server_timing", "policy_timing"):
+            timing = result.get(key)
+            if isinstance(timing, dict):
+                metadata[key] = dict(timing)
+        server_timing = result.get("server_timing")
+        if ("server_inference_latency_ms" not in metadata
+                and isinstance(server_timing, dict)
+                and server_timing.get("infer_ms") is not None):
+            metadata["server_inference_latency_ms"] = float(server_timing["infer_ms"])
+        return metadata
 
     def _default_request_adapter(self, request: PolicyRequest) -> Dict[str, Any]:
         obs = request.observation
+        try:
+            from openpi_client import image_tools
+        except ImportError as exc:
+            raise ImportError("OpenPIClient requires openpi-client==0.1.2") from exc
+
+        # Match models/openpi/examples/libero/main.py exactly. MuJoCo camera
+        # observations must be rotated by 180 degrees to match LIBERO training
+        # preprocessing, then resized with padding before transport.
+        image = np.ascontiguousarray(obs.agentview_rgb[::-1, ::-1])
+        wrist_image = np.ascontiguousarray(obs.wrist_rgb[::-1, ::-1])
+        image = image_tools.convert_to_uint8(
+            image_tools.resize_with_pad(image, self.image_size, self.image_size)
+        )
+        wrist_image = image_tools.convert_to_uint8(
+            image_tools.resize_with_pad(wrist_image, self.image_size, self.image_size)
+        )
+        state = np.concatenate((
+            obs.eef_pos,
+            self._quat2axisangle(obs.eef_quat),
+            obs.gripper_qpos,
+        ))
         result = {
-            "observation/agentview_rgb": obs.agentview_rgb,
-            "observation/wrist_rgb": obs.wrist_rgb,
-            "observation/eef_pos": obs.eef_pos,
-            "observation/eef_quat": obs.eef_quat,
-            "observation/gripper_qpos": obs.gripper_qpos,
-            "observation/joint_pos": obs.joint_pos,
+            "observation/image": image,
+            "observation/wrist_image": wrist_image,
+            "observation/state": state,
             "prompt": request.instruction,
-            "episode_id": request.episode_id,
-            "step": request.step,
         }
         if self.action_chunk_size is not None:
             result["action_chunk_size"] = self.action_chunk_size
         return result
+
+    @staticmethod
+    def _quat2axisangle(quat) -> np.ndarray:
+        """Convert an xyzw quaternion using OpenPI's LIBERO reference logic."""
+        quat = np.asarray(quat, dtype=np.float64)
+        w = float(np.clip(quat[3], -1.0, 1.0))
+        den = math.sqrt(max(0.0, 1.0 - w * w))
+        if math.isclose(den, 0.0):
+            return np.zeros(3, dtype=np.float64)
+        return quat[:3] * (2.0 * math.acos(w) / den)

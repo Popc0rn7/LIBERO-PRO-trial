@@ -4,8 +4,10 @@ from types import SimpleNamespace as NS
 import numpy as np
 import pytest
 
-from libero.evaluation import ActionSpec, ClientInfo, EvaluationRunner, PolicyClient, PolicyResponse
+from libero.evaluation import (ActionSpec, ClientInfo, EvaluationRunner, PolicyClient,
+                               PolicyRequest, PolicyResponse, RawObservation)
 from libero.evaluation.clients import available_clients, create_client, register_client
+from libero.evaluation.clients.openpi_client import OpenPIClient
 from libero.evaluation.policy_client import PolicyClient
 
 
@@ -38,6 +40,55 @@ def test_action_contract_rejections(actions, message):
         PolicyResponse(actions).validate(ActionSpec())
 
 
+def test_action_contract_preserves_openpi_float64_actions():
+    actions = np.full((2, 7), 1.5, dtype=np.float64)
+    response = PolicyResponse(actions).validate(ActionSpec())
+    assert response.actions.dtype == np.float64
+    np.testing.assert_array_equal(response.actions, actions)
+
+
+def test_openpi_libero_request_matches_upstream_protocol():
+    # Non-symmetric pixels prove that preprocessing rotates by 180 degrees.
+    image = np.arange(2 * 2 * 3, dtype=np.uint8).reshape(2, 2, 3)
+    wrist = image + 20
+    obs = RawObservation(
+        agentview_rgb=image,
+        wrist_rgb=wrist,
+        eef_pos=np.array([1, 2, 3], dtype=np.float32),
+        # xyzw quaternion for a 90-degree rotation around z.
+        eef_quat=np.array([0, 0, np.sqrt(0.5), np.sqrt(0.5)], dtype=np.float32),
+        gripper_qpos=np.array([0.1, 0.2], dtype=np.float32),
+        joint_pos=np.arange(7, dtype=np.float32),
+    )
+    request = PolicyRequest("episode", 4, "open drawer", obs)
+    payload = OpenPIClient("localhost", 8000, image_size=2)._default_request_adapter(request)
+
+    assert set(payload) == {
+        "observation/image", "observation/wrist_image", "observation/state", "prompt"
+    }
+    assert payload["observation/image"].shape == (2, 2, 3)
+    assert payload["observation/image"].dtype == np.uint8
+    # A square input stays unpadded, exposing the reference 180-degree rotation.
+    np.testing.assert_array_equal(payload["observation/image"][0, 0], image[-1, -1])
+    assert payload["observation/state"].shape == (8,)
+    np.testing.assert_allclose(payload["observation/state"][:3], [1, 2, 3])
+    np.testing.assert_allclose(payload["observation/state"][3:6], [0, 0, np.pi / 2], rtol=1e-6)
+    np.testing.assert_allclose(payload["observation/state"][6:], [0.1, 0.2])
+    assert payload["prompt"] == "open drawer"
+
+
+def test_openpi_response_maps_upstream_server_timing():
+    result = {
+        "actions": np.zeros((16, 7)),
+        "server_timing": {"infer_ms": 91.25, "prev_total_ms": 95.0},
+        "policy_timing": {"infer_ms": 88.5},
+    }
+    metadata = OpenPIClient._response_metadata(result)
+    assert metadata["server_inference_latency_ms"] == 91.25
+    assert metadata["server_timing"]["prev_total_ms"] == 95.0
+    assert metadata["policy_timing"]["infer_ms"] == 88.5
+
+
 class Task:
     name = "task"
     language = "do task"
@@ -51,10 +102,13 @@ class Suite:
 
 class Env:
     closed = 0
+    action_types = []
     def seed(self, seed): pass
     def reset(self): return None
     def set_init_state(self, state): return _obs()
-    def step(self, action): return _obs(), 0, False, {}
+    def step(self, action):
+        Env.action_types.append(type(action))
+        return _obs(), 0, False, {}
     def check_success(self): return True
     def close(self): Env.closed += 1
 
@@ -67,6 +121,7 @@ def _obs():
 
 
 def test_runner_multiple_tasks_outputs_and_closes(tmp_path):
+    Env.action_types = []
     policy = NS(name="mock", action={"type": "delta_ee", "dim": 7,
                                       "controller": "OSC_POSE", "control_frequency_hz": 20})
     cfg = NS(policy=policy, benchmark=NS(suite="suite", task_ids=[0, 1], episodes_per_task=1, init_state_ids=[], seed=3),
@@ -82,5 +137,6 @@ def test_runner_multiple_tasks_outputs_and_closes(tmp_path):
     summary, results = EvaluationRunner(cfg, client, lambda _: Suite(), lambda _: Env()).run()
     assert summary["success_rate"] == 1.0 and len(results) == 2
     assert Env.closed == 2
+    assert Env.action_types and all(action_type is list for action_type in Env.action_types)
     assert len((tmp_path / "episodes.jsonl").read_text().splitlines()) == 2
     assert json.loads((tmp_path / "summary.json").read_text())["successes"] == 2

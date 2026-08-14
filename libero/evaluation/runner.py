@@ -95,7 +95,7 @@ class EvaluationRunner:
                 last_recorded = False
                 while steps < int(self.cfg.rollout.max_steps):
                     if time.monotonic() >= deadline: reason = "episode_timeout"; break
-                    action = self.executor.act(obs, steps); obs, _, _, _ = env.step(action); steps += 1
+                    action = self.executor.act(obs, steps); obs, _, _, _ = env.step(action.tolist()); steps += 1
                     success = bool(env.check_success())
                     if (steps - 1) % int(self.cfg.recording.stride) == 0: video.append(upright_rgb(obs, "agentview_image")); last_recorded = True
                     else: last_recorded = False
