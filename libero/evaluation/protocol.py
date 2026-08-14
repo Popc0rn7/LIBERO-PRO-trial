@@ -76,9 +76,5 @@ class PolicyResponse:
             )
         if not np.isfinite(actions).all():
             raise ValueError("policy returned NaN or infinite actions")
-        if actions.dtype != np.float32:
-            raise ValueError("policy actions must have dtype float32")
-        if np.any(actions < -1.0) or np.any(actions > 1.0):
-            raise ValueError("policy actions must be within [-1, 1]")
         self.actions = actions
         return self

@@ -10,10 +10,10 @@ benchmark:
 perturbation:
   enabled: false
 rollout:
-  execute_horizon: 8
+  execute_horizon: 5
   warmup_steps: 10
-  max_steps: 600
-  episode_timeout_seconds: 300
+  max_steps: 300
+  episode_timeout_seconds: 50
 environment:
   render_backend: egl
 recording:

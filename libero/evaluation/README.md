@@ -15,14 +15,6 @@ pip install -r libero/evaluation/requirements.txt
 python -m libero.evaluation.eval policy=mock benchmark.task_ids='[0]' benchmark.episodes_per_task=1
 ```
 
-## Mock Policy Server
-
-可以使用 mock 的 policy 来离线测试评测联通性，默认 `noop` mock 保持机械臂不动，夹爪重复开合。
-
-```bash
-python -m libero.evaluation.mock_server --mode noop --chunk-size 16
-```
-
 ## 常用配置
 
 ```bash
@@ -39,6 +31,26 @@ python -m libero.evaluation.eval policy=pi0 \
 
 `benchmark.init_state_ids=[]` 时，每个 task 根据 `episodes_per_task` 顺序选择初态；显式提供列表时，该列表直接决定 episode schedule 和数量。
 
+## Helper
+
+### Mock Policy Server
+
+可以使用 mock 的 policy 来离线测试评测联通性，默认 `noop` mock 保持机械臂不动，夹爪重复开合。
+
+```bash
+python -m libero.evaluation.mock_server --mode noop --chunk-size 16
+```
+
+### Record & Live-Preview & Video Render
+
+通过开启 `config/eval.yaml` 中 `recording` 和 `live_preview` 可以打开视频保存和浏览器在线预览功能。
+
+为提高录制视频的可视化效果，额外提供一个脚本加工录制的视频，Usage: 
+
+```bash
+python scripts/render_eval_videos.py \
+    outputs/2026-08-14/11-16-46/evaluation
+```
 
 ## 架构
 
