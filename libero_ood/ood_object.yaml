@@ -36,7 +36,7 @@ libero_goal:
   put_the_wine_bottle_on_top_of_the_cabinet:
     wine_bottle:
       - white_bottle
-    :
+    wooden_cabinet:
       - yellow_cabinet
       - white_cabinet
   put_the_bowl_on_the_plate:

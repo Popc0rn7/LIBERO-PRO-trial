@@ -9,35 +9,9 @@ import numpy as np
 class OpenVLAAdapter:
     """Translate between LIBERO values and OpenVLA's native `/act` contract."""
 
-    PREPROCESS_SERVER = "server"
-    PREPROCESS_OFFICIAL_LIBERO = "official_libero"
-    _PREPROCESS_MODES = {
-        PREPROCESS_SERVER,
-        PREPROCESS_OFFICIAL_LIBERO,
-    }
-
+    image_preprocess = "official_libero"
+    center_crop = True
     OFFICIAL_CENTER_CROP_SCALE = 0.9
-
-    def __init__(
-        self,
-        image_preprocess: str = PREPROCESS_OFFICIAL_LIBERO,
-        center_crop: bool = False,
-    ) -> None:
-        if image_preprocess not in self._PREPROCESS_MODES:
-            raise ValueError(
-                "OpenVLA image_preprocess must be one of {}; got {!r}".format(
-                    sorted(self._PREPROCESS_MODES),
-                    image_preprocess,
-                )
-            )
-        if not isinstance(center_crop, bool):
-            raise ValueError("OpenVLA center_crop must be true or false")
-        if center_crop and image_preprocess != self.PREPROCESS_OFFICIAL_LIBERO:
-            raise ValueError(
-                "OpenVLA center_crop requires image_preprocess=official_libero"
-            )
-        self.image_preprocess = image_preprocess
-        self.center_crop = center_crop
 
     @staticmethod
     def _official_libero_image(image: np.ndarray) -> np.ndarray:
@@ -125,10 +99,8 @@ class OpenVLAAdapter:
         # Official OpenVLA LIBERO evaluation rotates the simulator image by
         # 180 degrees, performs a JPEG round trip, and resizes to 224px.
         image = np.ascontiguousarray(image[::-1, ::-1], dtype=np.uint8)
-        if self.image_preprocess == self.PREPROCESS_OFFICIAL_LIBERO:
-            image = self._official_libero_image(image)
-            if self.center_crop:
-                image = self._official_center_crop(image)
+        image = self._official_libero_image(image)
+        image = self._official_center_crop(image)
         return {
             "image": image,
             "instruction": instruction,

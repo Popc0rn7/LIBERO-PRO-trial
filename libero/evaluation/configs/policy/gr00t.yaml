@@ -2,7 +2,7 @@ name: gr00t
 client: gr00t
 connection:
   host: 127.0.0.1
-  port: 8001
+  port: 8000
   timeout_seconds: 30
   # api_token: null
 inference:

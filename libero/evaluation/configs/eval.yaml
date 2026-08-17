@@ -8,10 +8,10 @@ benchmark:
   init_state_ids: []
   seed: 7
 rollout:
-  execute_horizon: 5
+  execute_horizon: 8
   warmup_steps: 10
-  max_steps: 300
-  episode_timeout_seconds: 50
+  max_steps: 720
+  episode_timeout_seconds: 1000
 environment:
   render_backend: egl
 recording:
@@ -29,7 +29,7 @@ live_preview:
   stride: 1
 diagnostics:
   action_trace:
-    enabled: true
+    enabled: false
     directory: ${output.directory}/action_traces
 output:
   directory: ${hydra:runtime.output_dir}/evaluation

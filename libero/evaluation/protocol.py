@@ -41,6 +41,7 @@ class RawObservation:
 class PolicyRequest:
     instruction: str
     observation: RawObservation
+    capture_diagnostics: bool = False
 
 
 @dataclass

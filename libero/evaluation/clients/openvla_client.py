@@ -36,15 +36,18 @@ class OpenVLAClient(PolicyClient):
 
     def __init__(
         self,
-        base_url: str,
+        host: str,
+        port: int,
         timeout_seconds: float = 120.0,
         unnorm_key: str = "libero_10",
         *,
         adapter: Optional[OpenVLAAdapter] = None,
         session: Optional[Any] = None,
     ) -> None:
-        if not isinstance(base_url, str) or not base_url.startswith(("http://", "https://")):
-            raise ValueError("openvla connection.base_url must be an HTTP(S) URL")
+        if not isinstance(host, str) or not host.strip():
+            raise ValueError("openvla connection.host must be a non-empty hostname or IP address")
+        if not 0 < int(port) < 65536:
+            raise ValueError("openvla connection.port must be between 1 and 65535")
         if timeout_seconds <= 0:
             raise ValueError("openvla connection.timeout_seconds must be positive")
         if not isinstance(unnorm_key, str) or not unnorm_key.startswith("libero_"):
@@ -53,7 +56,8 @@ class OpenVLAClient(PolicyClient):
                 "starting with 'libero_' (for example, 'libero_10')"
             )
 
-        self.base_url = base_url.rstrip("/")
+        self.host, self.port = host, int(port)
+        self.base_url = "http://{}:{}".format(self.host, self.port)
         self.timeout_seconds = float(timeout_seconds)
         self.unnorm_key = unnorm_key
         self.adapter = adapter or OpenVLAAdapter()
@@ -64,18 +68,11 @@ class OpenVLAClient(PolicyClient):
     def from_config(cls, cfg):
         connection = cfg.get("connection", {})
         inference = cfg.get("inference", {})
-        adapter = cfg.get("adapter", {})
         return cls(
-            base_url=connection.get("base_url", ""),
+            host=connection.get("host", ""),
+            port=connection.get("port", 8000),
             timeout_seconds=connection.get("timeout_seconds", 120.0),
             unnorm_key=inference.get("unnorm_key", "libero_10"),
-            adapter=OpenVLAAdapter(
-                image_preprocess=adapter.get(
-                    "image_preprocess",
-                    OpenVLAAdapter.PREPROCESS_OFFICIAL_LIBERO,
-                ),
-                center_crop=adapter.get("center_crop", False),
-            ),
         )
 
     @staticmethod
@@ -139,10 +136,10 @@ class OpenVLAClient(PolicyClient):
 
         model_output = response.json()
         actions = self.adapter.actions_from_model_output(model_output)
-        model_image = np.asarray(payload["image"])
-        return PolicyResponse(
-            actions=actions,
-            metadata={
+        metadata = {}
+        if request.capture_diagnostics:
+            model_image = np.asarray(payload["image"])
+            metadata = {
                 # These values remain local.  They are recorded by the
                 # evaluator's optional action trace and are never sent back to
                 # the model server.
@@ -157,8 +154,8 @@ class OpenVLAClient(PolicyClient):
                 "model_input_image_dtype": str(model_image.dtype),
                 "model_input_image_mean": float(model_image.mean()),
                 "model_input_image_std": float(model_image.std()),
-            },
-        )
+            }
+        return PolicyResponse(actions=actions, metadata=metadata)
 
     def close(self) -> None:
         if self._owns_session:

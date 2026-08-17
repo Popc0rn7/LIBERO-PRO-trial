@@ -208,10 +208,8 @@ curl --fail http://127.0.0.1:8000/openapi.json
 ```bash
 python -m libero.evaluation.eval \
   policy=openvla \
-  policy.connection.base_url=http://127.0.0.1:8000 \
+  policy.connection.host=127.0.0.1 policy.connection.port=8000 \
   policy.inference.unnorm_key=libero_10 \
-  policy.adapter.image_preprocess=official_libero \
-  policy.adapter.center_crop=true \
   benchmark.evaluation_config_path=evaluation_config.yaml \
   benchmark.task_ids='[0]' \
   benchmark.episodes_per_task=1 \
@@ -240,10 +238,8 @@ round_trip_latency.count: 1
 ```bash
 python -m libero.evaluation.eval \
   policy=openvla \
-  policy.connection.base_url=http://127.0.0.1:8000 \
+  policy.connection.host=127.0.0.1 policy.connection.port=8000 \
   policy.inference.unnorm_key=libero_10 \
-  policy.adapter.image_preprocess=official_libero \
-  policy.adapter.center_crop=true \
   benchmark.evaluation_config_path=evaluation_config.yaml \
   benchmark.task_ids='[0]' \
   benchmark.episodes_per_task=1 \

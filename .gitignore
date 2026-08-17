@@ -20,3 +20,5 @@ libero.egg-info/
 .vscode/
 libero/libero/bddl_files/libero_*_env
 libero/libero/init_files/libero_*_env
+libero/libero/bddl_files/libero_*_temp
+libero/libero/init_files/libero_*_temp

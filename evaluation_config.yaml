@@ -4,10 +4,17 @@ init_file_dir: "./libero/libero/init_files/"
 task_suite_name: libero_10
 
 use_environment: true
-use_swap: false
-use_object: false
-use_language: false
+use_swap: true
+use_object: true
+use_language: true
 use_task: false
+
+# no perturbation
+# use_environment: false
+# use_swap: false
+# use_object: false
+# use_language: false
+# use_task: false
 
 ood_task_configs:
   environment: "./libero_ood/ood_environment.yaml"

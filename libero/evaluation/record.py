@@ -37,13 +37,12 @@ class VideoRecorder:
 class ActionTraceRecorder:
     """Write one compact, crash-readable JSON object per executed action."""
 
-    def __init__(self, path, enabled=False):
-        self.path, self.enabled, self._stream = Path(path), enabled, None
+    def __init__(self, path):
+        self.path, self._stream = Path(path), None
 
     def __enter__(self):
-        if self.enabled:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            self._stream = self.path.open("w", encoding="utf-8")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._stream = self.path.open("w", encoding="utf-8")
         return self
 
     def append(self, record):

@@ -51,20 +51,16 @@ class FakeSession:
 
 
 class OpenVLAAdapterTest(unittest.TestCase):
-    def test_observation_uses_only_rotated_main_rgb_image(self):
+    def test_observation_uses_only_main_rgb_image(self):
         raw = observation()
-        payload = OpenVLAAdapter(image_preprocess="server").adapt_observation(
+        payload = OpenVLAAdapter().adapt_observation(
             raw,
             "pick up the object",
             "libero_10",
         )
 
-        np.testing.assert_array_equal(
-            payload["image"],
-            raw.agentview_rgb[::-1, ::-1],
-        )
         self.assertTrue(payload["image"].flags.c_contiguous)
-        self.assertEqual(payload["image"].shape, (2, 3, 3))
+        self.assertEqual(payload["image"].shape, (224, 224, 3))
         self.assertEqual(payload["image"].dtype, np.uint8)
         self.assertEqual(payload["instruction"], "pick up the object")
         self.assertEqual(payload["unnorm_key"], "libero_10")
@@ -82,25 +78,7 @@ class OpenVLAAdapterTest(unittest.TestCase):
         self.assertEqual(payload["image"].dtype, np.uint8)
         self.assertTrue(payload["image"].flags.c_contiguous)
         self.assertEqual(adapter.image_preprocess, "official_libero")
-        self.assertFalse(adapter.center_crop)
-
-    def test_official_center_crop_is_optional(self):
-        payload = OpenVLAAdapter(center_crop=True).adapt_observation(
-            observation(),
-            "pick up the object",
-            "libero_10",
-        )
-
-        self.assertEqual(payload["image"].shape, (224, 224, 3))
-        self.assertEqual(payload["image"].dtype, np.uint8)
-
-    def test_center_crop_requires_official_image_preprocessing(self):
-        with self.assertRaisesRegex(ValueError, "center_crop"):
-            OpenVLAAdapter(image_preprocess="server", center_crop=True)
-
-    def test_unknown_image_preprocessing_mode_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "image_preprocess"):
-            OpenVLAAdapter(image_preprocess="unknown")
+        self.assertTrue(adapter.center_crop)
 
     def test_non_libero_unnorm_key_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "starting with 'libero_'"):
@@ -149,7 +127,8 @@ class OpenVLAClientTest(unittest.TestCase):
             np.asarray([0.1, -0.1, 0, 0, 0, 0, 1.0], dtype=np.float32)
         )
         client = OpenVLAClient(
-            "http://gpu-server:8000",
+            "gpu-server",
+            8000,
             timeout_seconds=120,
             unnorm_key="libero_10",
             session=session,
@@ -160,6 +139,7 @@ class OpenVLAClientTest(unittest.TestCase):
             PolicyRequest(
                 instruction="pick up the object",
                 observation=observation(),
+                capture_diagnostics=True,
             )
         ).validate(ActionSpec())
 
@@ -180,17 +160,36 @@ class OpenVLAClientTest(unittest.TestCase):
         self.assertEqual(response.metadata["adapted_action_chunk"][0][-1], -1.0)
         self.assertEqual(response.metadata["model_input_image_shape"], [224, 224, 3])
         self.assertEqual(response.metadata["unnorm_key"], "libero_10")
-        self.assertFalse(response.metadata["center_crop"])
+        self.assertTrue(response.metadata["center_crop"])
+
+    def test_diagnostics_metadata_is_not_built_by_default(self):
+        client = OpenVLAClient(
+            "gpu-server",
+            8000,
+            session=FakeSession(
+                np.asarray([0, 0, 0, 0, 0, 0, 1.0], dtype=np.float32)
+            ),
+        )
+
+        response = client.infer(
+            PolicyRequest(
+                instruction="pick up the object",
+                observation=observation(),
+            )
+        )
+
+        self.assertEqual(response.metadata, {})
 
     def test_non_libero_unnorm_key_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "starting with 'libero_'"):
             OpenVLAClient(
-                "http://gpu-server:8000",
+                "gpu-server",
+                8000,
                 unnorm_key="bridge_orig",
                 session=FakeSession(np.zeros(7, dtype=np.float32)),
             )
 
-    def test_config_selects_official_libero_image_preprocessing(self):
+    def test_config_uses_fixed_libero_preprocessing(self):
         import unittest.mock
 
         session = FakeSession(
@@ -202,12 +201,8 @@ class OpenVLAClientTest(unittest.TestCase):
         ):
             client = OpenVLAClient.from_config(
                 {
-                    "connection": {"base_url": "http://gpu-server:8000"},
+                    "connection": {"host": "gpu-server", "port": 8000},
                     "inference": {"unnorm_key": "libero_10"},
-                    "adapter": {
-                        "image_preprocess": "official_libero",
-                        "center_crop": True,
-                    },
                 }
             )
 

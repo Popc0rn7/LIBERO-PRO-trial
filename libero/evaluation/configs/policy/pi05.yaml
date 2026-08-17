@@ -2,7 +2,7 @@ name: pi05
 client: openpi
 connection:
   host: 127.0.0.1
-  port: 8001
+  port: 8000
   timeout_seconds: 30
 inference:
   image_size: 224

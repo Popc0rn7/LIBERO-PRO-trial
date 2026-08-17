@@ -5,6 +5,7 @@ import os
 import random
 import statistics
 import time
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -44,7 +45,18 @@ class EvaluationRunner:
             from .perturbation import EvaluationSuite
             suite_identity = EvaluationSuite(suite, suite, "none")
         self.suite_identity = suite_identity
-        self.executor = ActionChunkExecutor(client, int(cfg.rollout.execute_horizon), self._action_spec(cfg.policy.action))
+        diagnostics = getattr(cfg, "diagnostics", None)
+        action_trace = getattr(diagnostics, "action_trace", None)
+        self.action_trace_enabled = bool(getattr(action_trace, "enabled", False))
+        self.action_trace_directory = (
+            Path(str(action_trace.directory)) if self.action_trace_enabled else None
+        )
+        self.executor = ActionChunkExecutor(
+            client,
+            int(cfg.rollout.execute_horizon),
+            self._action_spec(cfg.policy.action),
+            capture_action_metadata=self.action_trace_enabled,
+        )
 
     @staticmethod
     def _action_spec(cfg):
@@ -91,14 +103,6 @@ class EvaluationRunner:
 
     def _publish(self, obs, status):
         if self.preview: self.preview.publish(agentview_rgb=upright_rgb(obs, "agentview_image"), wrist_rgb=upright_rgb(obs, "robot0_eye_in_hand_image"), status=status)
-
-    def _action_trace_settings(self):
-        diagnostics = getattr(self.cfg, "diagnostics", None)
-        action_trace = getattr(diagnostics, "action_trace", None)
-        enabled = bool(getattr(action_trace, "enabled", False))
-        default_directory = Path(str(self.cfg.output.directory)) / "action_traces"
-        directory = Path(str(getattr(action_trace, "directory", default_directory)))
-        return enabled, directory
 
     @staticmethod
     def _trace_record(episode_id, step, instruction, metadata, action, before, after, success):
@@ -150,8 +154,10 @@ class EvaluationRunner:
         video_path = Path(str(self.cfg.recording.directory)) / "task_{}_episode_{}_init_{}.mp4".format(task_id, episode_index, state_id)
         wrist_video_path = Path(str(self.cfg.recording.directory)) / "task_{}_episode_{}_init_{}_wrist.mp4".format(
             task_id, episode_index, state_id)
-        trace_enabled, trace_directory = self._action_trace_settings()
-        trace_path = trace_directory / "task_{}_episode_{}_init_{}.jsonl".format(task_id, episode_index, state_id)
+        trace_path = None
+        if self.action_trace_enabled:
+            trace_path = self.action_trace_directory / \
+                "task_{}_episode_{}_init_{}.jsonl".format(task_id, episode_index, state_id)
         try:
             env.reset(); obs = env.set_init_state(state)
             warmup = np.array([0, 0, 0, 0, 0, 0, -1], np.float32)
@@ -160,9 +166,10 @@ class EvaluationRunner:
                 if warmup_step % int(self.cfg.live_preview.stride) == 0: self._publish(obs, {"phase":"warmup", "episode_id":episode_id})
             prompt = str(env.language_instruction)
             self.executor.reset(episode_id, prompt)
+            trace_context = ActionTraceRecorder(trace_path) if self.action_trace_enabled else nullcontext()
             with VideoRecorder(video_path, bool(self.cfg.recording.enabled), int(self.cfg.recording.fps)) as video, \
                     VideoRecorder(wrist_video_path, bool(self.cfg.recording.enabled), int(self.cfg.recording.fps)) as wrist_video, \
-                    ActionTraceRecorder(trace_path, trace_enabled) as action_trace:
+                    trace_context as action_trace:
                 deadline = time.monotonic() + float(self.cfg.rollout.episode_timeout_seconds)
                 last_recorded = False
                 while steps < int(self.cfg.rollout.max_steps):
@@ -171,10 +178,11 @@ class EvaluationRunner:
                     action = self.executor.act(before, steps)
                     obs, _, done, _ = env.step(action.tolist()); steps += 1
                     success = bool(done)
-                    action_trace.append(self._trace_record(
-                        episode_id, steps - 1, prompt,
-                        self.executor.last_action_metadata, action, before, obs, success
-                    ))
+                    if self.action_trace_enabled:
+                        action_trace.append(self._trace_record(
+                            episode_id, steps - 1, prompt,
+                            self.executor.last_action_metadata, action, before, obs, success
+                        ))
                     if (steps - 1) % int(self.cfg.recording.stride) == 0:
                         video.append(upright_rgb(obs, "agentview_image"))
                         wrist_video.append(upright_rgb(obs, "robot0_eye_in_hand_image"))
@@ -195,7 +203,7 @@ class EvaluationRunner:
             list(self.executor.round_trip_latency_ms), list(self.executor.server_inference_latency_ms),
             str(video_path) if bool(self.cfg.recording.enabled) else "",
             str(wrist_video_path) if bool(self.cfg.recording.enabled) else "",
-            str(trace_path) if trace_enabled else "")
+            str(trace_path) if self.action_trace_enabled else "")
 
     def _append_jsonl(self, result):
         path = Path(str(self.cfg.output.directory)) / str(self.cfg.output.episodes_file); path.parent.mkdir(parents=True, exist_ok=True)

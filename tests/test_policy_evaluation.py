@@ -35,9 +35,20 @@ class FakeClient(PolicyClient):
 
 
 class ActionChunkExecutorTest(unittest.TestCase):
+    def test_metadata_capture_is_disabled_by_default(self):
+        executor = ActionChunkExecutor(FakeClient(), execute_horizon=2)
+        executor.reset("episode-1", "do it")
+
+        executor.act(observation(), 0)
+
+        self.assertIsNone(executor._metadata_queue)
+        self.assertIsNone(executor.last_action_metadata)
+
     def test_replans_at_shared_horizon(self):
         client = FakeClient()
-        executor = ActionChunkExecutor(client, execute_horizon=2)
+        executor = ActionChunkExecutor(
+            client, execute_horizon=2, capture_action_metadata=True
+        )
         executor.reset("episode-1", "do it")
         values = [executor.act(observation(), step)[0] for step in range(3)]
         self.assertEqual(values, [0.5, 0.5, 1.0])
