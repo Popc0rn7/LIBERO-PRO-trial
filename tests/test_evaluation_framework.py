@@ -175,11 +175,15 @@ def test_runner_multiple_tasks_outputs_and_closes(tmp_path):
              rollout=NS(execute_horizon=2, warmup_steps=0, max_steps=3, episode_timeout_seconds=10),
              recording=NS(enabled=False, directory=str(tmp_path/"videos"), fps=10, stride=1),
              live_preview=NS(stride=1),
+             diagnostics=NS(action_trace=NS(enabled=True, directory=str(tmp_path/"action_traces"))),
              output=NS(directory=str(tmp_path), episodes_file="episodes.jsonl", summary_file="summary.json"))
     class Client(PolicyClient):
         def check(self): return ClientInfo(True, "test")
         def reset(self, episode_id, instruction): pass
-        def infer(self, request): return PolicyResponse(np.zeros((2, 7), np.float32))
+        def infer(self, request): return PolicyResponse(
+            np.zeros((2, 7), np.float32),
+            metadata={"raw_model_action": [0.0] * 7},
+        )
     client = Client()
     summary, results = EvaluationRunner(cfg, client, lambda _: Suite(), lambda _: Env()).run()
     assert summary["success_rate"] == 1.0 and len(results) == 2
@@ -197,6 +201,13 @@ def test_runner_multiple_tasks_outputs_and_closes(tmp_path):
     assert episode["perturbation_type"] == "none"
     assert episode["video_path"] == ""
     assert episode["wrist_video_path"] == ""
+    assert episode["action_trace_path"]
+    traces = sorted((tmp_path / "action_traces").glob("*.jsonl"))
+    assert len(traces) == 2
+    trace = json.loads(traces[0].read_text().splitlines()[0])
+    assert trace["raw_model_action"] == [0.0] * 7
+    assert trace["libero_action"] == [0.0] * 7
+    assert trace["observed_eef_delta_norm"] == 0.0
 
 
 def test_runner_rejects_cycling_more_episodes_than_init_states(tmp_path):

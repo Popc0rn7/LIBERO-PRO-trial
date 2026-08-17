@@ -27,6 +27,10 @@ live_preview:
   port: 8765
   refresh_hz: 10
   stride: 1
+diagnostics:
+  action_trace:
+    enabled: true
+    directory: ${output.directory}/action_traces
 output:
   directory: ${hydra:runtime.output_dir}/evaluation
   episodes_file: episodes.jsonl
