@@ -18,7 +18,7 @@ class ActionSpec:
 
 @dataclass
 class RawObservation:
-    """Raw LIBERO values; model-specific transforms belong on the server."""
+    """Raw LIBERO values; model-specific transforms belong to PolicyClient adapters."""
 
     agentview_rgb: np.ndarray
     wrist_rgb: np.ndarray

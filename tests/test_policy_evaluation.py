@@ -28,7 +28,10 @@ class FakeClient(PolicyClient):
 
     def infer(self, request):
         self.calls += 1
-        return PolicyResponse(np.full((4, 7), self.calls * 0.5, dtype=np.float32))
+        return PolicyResponse(
+            np.full((4, 7), self.calls * 0.5, dtype=np.float32),
+            metadata={"raw_model_action": [self.calls * 0.5] * 7},
+        )
 
 
 class ActionChunkExecutorTest(unittest.TestCase):
@@ -39,6 +42,9 @@ class ActionChunkExecutorTest(unittest.TestCase):
         values = [executor.act(observation(), step)[0] for step in range(3)]
         self.assertEqual(values, [0.5, 0.5, 1.0])
         self.assertEqual(client.calls, 2)
+        self.assertEqual(executor.last_action_metadata["policy_query_index"], 1)
+        self.assertEqual(executor.last_action_metadata["chunk_action_index"], 0)
+        self.assertEqual(executor.last_action_metadata["raw_model_action"], [1.0] * 7)
 
     def test_reset_discards_old_chunk(self):
         client = FakeClient()

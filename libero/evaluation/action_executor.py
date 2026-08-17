@@ -24,16 +24,20 @@ class ActionChunkExecutor:
         self.execute_horizon = execute_horizon
         self.action_spec = action_spec or ActionSpec()
         self._queue: Deque[np.ndarray] = deque()
+        self._metadata_queue: Deque[dict] = deque()
         self._episode_id = ""
         self._instruction = ""
+        self.last_action_metadata = {}
         self.query_count = 0
         self.round_trip_latency_ms = []
         self.server_inference_latency_ms = []
 
     def reset(self, episode_id: str, instruction: str) -> None:
         self._queue.clear()
+        self._metadata_queue.clear()
         self._episode_id = episode_id
         self._instruction = instruction
+        self.last_action_metadata = {}
         self.query_count = 0
         self.round_trip_latency_ms = []
         self.server_inference_latency_ms = []
@@ -50,11 +54,26 @@ class ActionChunkExecutor:
             import time
             started = time.monotonic()
             response = self.client.infer(request).validate(self.action_spec)
-            self.round_trip_latency_ms.append((time.monotonic() - started) * 1000.0)
+            round_trip_ms = (time.monotonic() - started) * 1000.0
+            self.round_trip_latency_ms.append(round_trip_ms)
+            query_index = self.query_count
             self.query_count += 1
             latency = response.metadata.get("server_inference_latency_ms", response.metadata.get("inference_ms"))
             if latency is not None:
                 self.server_inference_latency_ms.append(float(latency))
-            for action in response.actions[: self.execute_horizon]:
+            base_metadata = dict(response.metadata)
+            base_metadata.update(
+                {
+                    "policy_query_index": query_index,
+                    "round_trip_latency_ms": round_trip_ms,
+                }
+            )
+            for action_index, action in enumerate(
+                response.actions[: self.execute_horizon]
+            ):
                 self._queue.append(action.copy())
+                action_metadata = dict(base_metadata)
+                action_metadata["chunk_action_index"] = action_index
+                self._metadata_queue.append(action_metadata)
+        self.last_action_metadata = self._metadata_queue.popleft()
         return self._queue.popleft()

@@ -1,5 +1,6 @@
-"""Per-episode video recording helpers."""
+"""Per-episode video and action-trace recording helpers."""
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -31,3 +32,25 @@ class VideoRecorder:
     def __exit__(self, *args):
         if self._writer is not None:
             self._writer.close()
+
+
+class ActionTraceRecorder:
+    """Write one compact, crash-readable JSON object per executed action."""
+
+    def __init__(self, path, enabled=False):
+        self.path, self.enabled, self._stream = Path(path), enabled, None
+
+    def __enter__(self):
+        if self.enabled:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self._stream = self.path.open("w", encoding="utf-8")
+        return self
+
+    def append(self, record):
+        if self._stream is not None:
+            self._stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+            self._stream.flush()
+
+    def __exit__(self, *args):
+        if self._stream is not None:
+            self._stream.close()
